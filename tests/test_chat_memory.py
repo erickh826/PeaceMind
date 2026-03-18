@@ -7,7 +7,7 @@ from app.storage import conversation_store
 def test_chat_uses_server_side_memory_and_ignores_client_history(monkeypatch):
     captured_histories: list[list[dict[str, str]]] = []
 
-    def fake_chat_with_llm(user_message: str, conversation_history: list[dict] | None = None):
+    def fake_chat_with_llm(user_message: str, conversation_history: list[dict] | None = None, **kwargs):
         captured_histories.append(conversation_history or [])
         return "我明白你很辛苦，我在這裡陪你。"
 
@@ -47,7 +47,7 @@ def test_chat_uses_server_side_memory_and_ignores_client_history(monkeypatch):
 def test_reset_endpoint_clears_session_memory(monkeypatch):
     captured_histories: list[list[dict[str, str]]] = []
 
-    def fake_chat_with_llm(user_message: str, conversation_history: list[dict] | None = None):
+    def fake_chat_with_llm(user_message: str, conversation_history: list[dict] | None = None, **kwargs):
         captured_histories.append(conversation_history or [])
         return "我會陪你慢慢整理。"
 
@@ -87,7 +87,7 @@ def test_reset_endpoint_clears_session_memory(monkeypatch):
 def test_sessions_are_isolated(monkeypatch):
     captured_histories: list[list[dict[str, str]]] = []
 
-    def fake_chat_with_llm(user_message: str, conversation_history: list[dict] | None = None):
+    def fake_chat_with_llm(user_message: str, conversation_history: list[dict] | None = None, **kwargs):
         captured_histories.append(conversation_history or [])
         return "我在。"
 
