@@ -1,12 +1,9 @@
 """
 Chat Router — 主要對話端點
-整合五層防禦機制：
-
-  Layer 1a: Input Gateway    — Regex 黑名單（長度/注入/危機）
-  Layer 1b: Semantic Gateway — Azure AI Content Safety Prompt Shields
-  Layer 1c: Multi-turn Scorer — Sliding Window 時序風險評分
-  Layer 2:  LLM Core         — Azure OpenAI + Sandwich Prompt
-  Layer 3:  Output Gateway   — 藥名/診斷/系統洩露 Regex 過濾
+整合三層防禦機制：
+  Layer 1: Input Gateway
+  Layer 2: LLM Core (with Sandwich Prompt)
+  Layer 3: Output Gateway
 """
 
 import logging
@@ -14,27 +11,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.gateways.input_gateway import check_input, InputStatus
-from app.gateways.semantic_gateway import check_semantic, SemanticStatus
-from app.gateways.multiturn_gateway import evaluate_multiturn_risk, RiskAction
 from app.gateways.output_gateway import check_output, OutputStatus
 from app.core.llm_client import chat_with_llm
 from app.core.crisis_handler import get_crisis_response
+from app.storage import conversation_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# ── 共用阻擋訊息 ──────────────────────────────────────────────────────────────
-_BLOCK_MSG = (
-    "我感受到你可能有些困惑或憤怒，"
-    "但我只是一個心理支持助理，"
-    "有什麼情緒上的事情想跟我說嗎？"
-)
-_MULTITURN_BLOCK_MSG = (
-    "我注意到我們的對話方向有些偏離了。"
-    "我是阿本，只能提供情緒支持，"
-    "不是一個可以被重新設定的系統。"
-    "有什麼真實的感受想和我分享嗎？"
-)
 
 
 class Message(BaseModel):
@@ -43,7 +26,9 @@ class Message(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    session_id: str = Field(..., min_length=8, max_length=128)
     message: str = Field(..., min_length=1, max_length=1600)
+    # Legacy compatibility only. Server-side memory is authoritative.
     history: list[Message] = Field(default_factory=list, max_length=20)
 
 
@@ -53,66 +38,44 @@ class ChatResponse(BaseModel):
     crisis: bool = False
 
 
+class ResetRequest(BaseModel):
+    session_id: str = Field(..., min_length=8, max_length=128)
+
+
+class ResetResponse(BaseModel):
+    status: str
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """
-    主要對話端點，執行完整五層防禦流程。
+    主要對話端點，執行完整三層防禦流程：
 
-    防禦層順序（由快到慢）：
-      L1a → L1b → L1c → L2 → L3
+    1. Input Gateway → 長度/注入/危機偵測
+    2. LLM Core → 三明治結構推理
+    3. Output Gateway → 藥名/診斷/洩漏掃描
     """
+    session_id = request.session_id.strip()
     user_message = request.message.strip()
-    history = [msg.model_dump() for msg in request.history]
+    history = conversation_store.get_history(session_id)
 
-    # ── Layer 1a: Input Gateway（Regex）───────────────────────────────────────
+    # ── Layer 1: Input Gateway ──────────────────────────────────
     input_result = check_input(user_message)
 
     if input_result.status == InputStatus.BLOCKED:
-        logger.warning("L1a BLOCKED | len=%d | snippet=%.50s", len(user_message), user_message)
+        logger.warning("Input blocked | length=%d", len(user_message))
         return ChatResponse(reply=input_result.message, intercepted=True)
 
     if input_result.status == InputStatus.CRISIS:
-        logger.warning("L1a CRISIS | snippet=%.50s", user_message)
+        logger.warning("CRISIS detected | input_snippet=%s", user_message[:50])
         crisis_reply = get_crisis_response(user_message)
+        conversation_store.append(session_id, "user", user_message)
+        conversation_store.append(session_id, "assistant", crisis_reply)
         return ChatResponse(reply=crisis_reply, crisis=True)
 
-    # ── Layer 1b: Semantic Gateway（Prompt Shields）──────────────────────────
-    # async call — 不阻塞，fail-open（見 semantic_gateway.py）
-    semantic_result = await check_semantic(user_message)
-
-    if semantic_result.status == SemanticStatus.ATTACK:
-        logger.warning("L1b BLOCKED (semantic) | snippet=%.50s", user_message)
-        return ChatResponse(reply=_BLOCK_MSG, intercepted=True)
-
-    # ── Layer 1c: Multi-turn Risk Scorer（Sliding Window）───────────────────
-    mt_result = evaluate_multiturn_risk(
-        history=history,
-        current_message=user_message,
-    )
-
-    if mt_result.action == RiskAction.BLOCK:
-        logger.warning(
-            "L1c BLOCKED (multi-turn) | score=%.3f | snippet=%.50s",
-            mt_result.cumulative_score, user_message,
-        )
-        return ChatResponse(reply=_MULTITURN_BLOCK_MSG, intercepted=True)
-
-    # WARN → 傳遞 security_hint 給 LLM，靜默強化角色護欄
-    security_hint = "HIGH_RISK" if mt_result.action == RiskAction.WARN else None
-
-    if security_hint:
-        logger.warning(
-            "L1c WARN (multi-turn) | score=%.3f | injecting security hint",
-            mt_result.cumulative_score,
-        )
-
-    # ── Layer 2: LLM Core（Azure OpenAI + Sandwich Prompt）──────────────────
+    # ── Layer 2: LLM Core ───────────────────────────────────────
     try:
-        llm_reply = chat_with_llm(
-            user_message,
-            conversation_history=history,
-            security_hint=security_hint,
-        )
+        llm_reply = chat_with_llm(user_message, conversation_history=history)
     except Exception as e:
         logger.error("LLM call failed: %s", str(e))
         raise HTTPException(
@@ -120,15 +83,25 @@ async def chat(request: ChatRequest):
             detail="AI 服務暫時無法使用，請稍後再試。",
         )
 
-    # ── Layer 3: Output Gateway（Regex 輸出過濾）────────────────────────────
+    # ── Layer 3: Output Gateway ─────────────────────────────────
     output_result = check_output(llm_reply)
 
     if output_result.status == OutputStatus.INTERCEPTED:
         logger.warning(
-            "L3 INTERCEPTED | rule=%s | snippet=%.80s",
+            "Output intercepted | rule=%s | snippet=%s",
             output_result.triggered_rule,
-            llm_reply,
+            llm_reply[:80],
         )
+        conversation_store.append(session_id, "user", user_message)
+        conversation_store.append(session_id, "assistant", output_result.response)
         return ChatResponse(reply=output_result.response, intercepted=True)
 
+    conversation_store.append(session_id, "user", user_message)
+    conversation_store.append(session_id, "assistant", output_result.response)
     return ChatResponse(reply=output_result.response)
+
+
+@router.post("/reset", response_model=ResetResponse)
+async def reset(request: ResetRequest):
+    conversation_store.reset(request.session_id.strip())
+    return ResetResponse(status="cleared")
