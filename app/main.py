@@ -46,6 +46,17 @@ app.add_middleware(
 app.include_router(chat.router, prefix="/api/v1", tags=["Chat"])
 
 
+@app.get("/", tags=["Health"])
+async def root():
+    return {
+        "service": "PeaceMind API",
+        "version": "0.1.0",
+        "description": "心理諮詢 AI 助理 Boon — Backend API",
+        "docs": "/docs",
+        "chat": "/api/v1/chat",
+    }
+
+
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {"status": "ok", "service": "PeaceMind", "version": "0.1.0"}
