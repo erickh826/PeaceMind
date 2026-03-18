@@ -9,6 +9,8 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+from app.core.language_detector import detect_language, get_unsupported_language_message
+
 
 class InputStatus(str, Enum):
     OK = "ok"
@@ -81,13 +83,23 @@ class GatewayResult:
 
 def check_input(user_input: str) -> GatewayResult:
     """
-    對用戶輸入進行三重檢查：
-    1. 長度限制
-    2. 危機關鍵字偵測（優先）
-    3. Prompt Injection 過濾
+    對用戶輸入進行四重檢查：
+    1. 語言邊界檢查（僅支援 zh-tw / zh-cn / yue / en）
+    2. 長度限制
+    3. 危機關鍵字偵測（優先）
+    4. Prompt Injection 過濾
     返回 GatewayResult 供後續處理
     """
-    # 1. 長度限制
+    # ── 1. 語言邊界（未支援語言直接攔截）───────────────────────────────────────
+    language = detect_language(user_input)
+    if not language.supported:
+        return GatewayResult(
+            status=InputStatus.BLOCKED,
+            message=get_unsupported_language_message(),
+            original_input=user_input,
+        )
+
+    # ── 2. 長度限制────────────────────────────────────────────────────────
     if len(user_input) > MAX_INPUT_LENGTH:
         return GatewayResult(
             status=InputStatus.BLOCKED,
@@ -95,7 +107,7 @@ def check_input(user_input: str) -> GatewayResult:
             original_input=user_input,
         )
 
-    # 2. 危機關鍵字偵測（優先處理，不阻擋，由後端觸發危機介入）
+    # ── 3. 危機關鍵字偵測（優先處理，不阻擋，由後端觸發危機介入）─────────────
     for pattern in CRISIS_KEYWORDS:
         if re.search(pattern, user_input, re.IGNORECASE):
             return GatewayResult(
@@ -104,7 +116,7 @@ def check_input(user_input: str) -> GatewayResult:
                 original_input=user_input,
             )
 
-    # 3. Prompt Injection 黑名單過濾
+    # ── 4. Prompt Injection 黑名單過濾────────────────────────────────────────────
     for pattern in INJECTION_PATTERNS:
         if re.search(pattern, user_input, re.IGNORECASE):
             return GatewayResult(
