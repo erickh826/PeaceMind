@@ -42,7 +42,10 @@ SYSTEM_LEAK_PATTERNS = [
     r"(?:system\s+prompt|system_prompt)",
     r"TOP_LAYER|BOTTOM_LAYER|SANDWICH",
     r"INJECTION_PATTERNS|CRISIS_KEYWORDS",
-    r"我的(?:系統提示|內部指令|真實身份)(?:是|為)",
+    r"我的(?:系統提示|內部指令|真實身份)(?:是|為|如下|這樣)",
+    r"系統提示(?:詞)?.*是這樣說的",
+    r"(?:內部|系統).*指令.*(?:要求|說|要)我",
+    r"我的內部指令",
 ]
 
 # 預設安全替換回覆

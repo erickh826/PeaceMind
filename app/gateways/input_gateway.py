@@ -18,23 +18,36 @@ class InputStatus(str, Enum):
 
 # Prompt Injection / 越權指令黑名單
 INJECTION_PATTERNS = [
-    r"ignore\s+(previous|all|prior)\s+instructions?",
+    # ── 英文注入：指令覆寫 ────────────────────────────────────
+    r"ignore\s+(?:\w+\s+){0,2}instructions?",
     r"system\s+override",
-    r"你是.*(?:GPT|AI|機器人|robot|assistant).*假裝",
-    r"forget\s+(everything|all|prior)",
-    r"disregard\s+(your|all|previous)",
-    r"act\s+as\s+(if\s+you\s+(are|were)|a)",
+    r"forget\s+(everything|all|prior|your)\s*(instructions?|rules?|guidelines?)?",
+    r"disregard\s+(your|all|previous|prior)\s*(instructions?|rules?|guidelines?)?",
+    r"act\s+as\s+(if\s+you\s+(are|were|have\s+no)|a\s+(?:doctor|therapist|psychiatrist|AI\s+without))",
+    r"act\s+as\s+if\s+you\s+have\s+no",
+    r"pretend\s+(you\s+are|to\s+be|you\s+have\s+no)",
     r"pretend\s+(you\s+are|to\s+be)",
     r"jailbreak",
     r"DAN\s*mode",
     r"developer\s+mode",
     r"prompt\s+injection",
+    # ── 英文注入：系統資訊探測 ───────────────────────────────
     r"reveal\s+(your\s+)?(system\s+)?prompt",
     r"show\s+(me\s+)?(your\s+)?(system\s+)?instructions?",
+    r"what\s+are\s+your\s+(system\s+)?instructions?",
+    r"what\s+(are\s+)?your\s+(rules|guidelines|system\s+prompt)",
+    r"tell\s+me\s+(your\s+)?(system\s+)?(prompt|instructions?|rules?)",
+    # ── 中文注入：指令覆寫 ────────────────────────────────────
     r"忽略.*(?:指令|規則|限制|系統)",
     r"忘記.*(?:指令|規則|限制|系統)",
     r"解除.*(?:限制|封鎖|禁令)",
     r"扮演.*(?:醫生|醫師|精神科)",
+    r"假裝.*(?:人類|沒有限制|沒有任何限制|不受限制)",
+    r"沒有.*(?:限制|任何限制|規則).*(?:AI|助理|幫手)",
+    # ── 中文注入：系統資訊探測 ───────────────────────────────
+    r"(?:你的)?(?:真實|內部|隱藏)?系統提示(?:詞)?.*(?:是|為|什麼)",
+    r"告訴我.*(?:內部|系統)?指令",
+    r"你的.*(?:內部|系統).*指令",
 ]
 
 # 危機關鍵字（需強制介入）
@@ -52,6 +65,8 @@ CRISIS_KEYWORDS = [
     r"end\s+(my\s+)?life",
     r"想消失",
     r"唔想活",
+    r"唔想存在",
+    r"唔想.*(?:活|存在|喺度)",
 ]
 
 MAX_INPUT_LENGTH = 1500
