@@ -16,21 +16,28 @@ def get_azure_client() -> AzureOpenAI:
     )
 
 
-def chat_with_llm(user_message: str, conversation_history: list[dict] | None = None) -> str:
+def chat_with_llm(
+    user_message: str,
+    conversation_history: list[dict] | None = None,
+    security_hint: str | None = None,
+) -> str:
     """
     呼叫 Azure OpenAI，使用三明治結構 Prompt。
 
-    conversation_history 格式：
-    [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
+    Args:
+        user_message: 使用者輸入
+        conversation_history: 對話歷史
+            [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
+        security_hint: 傳入 "HIGH_RISK" 時將在系統提示注入安全提示層（Phase 5b WARN 用）
     """
     client = get_azure_client()
     deployment = os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"]
 
     # 建構訊息列表
-    # System message 為頂層 + 底層護欄
+    # System message 為頂層 + [選配安全提示] + 底層護欄
     system_message = {
         "role": "system",
-        "content": build_prompt(""),  # 取得完整的系統提示框架
+        "content": build_prompt("", security_hint=security_hint),
     }
 
     messages = [system_message]
