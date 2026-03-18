@@ -11,6 +11,12 @@
     │
     ▼
 ┌─────────────────────────┐
+│ Session Memory Store    │  以 session_id 管理多輪對話記憶（PoC: in-memory）
+│ + Reset Control         │  POST /api/v1/reset 清空會話上下文
+└────────────┬────────────┘
+       │
+       ▼
+┌─────────────────────────┐
 │  Layer 1: Input Gateway  │  長度限制 + Prompt Injection 過濾 + 危機偵測
 └────────────┬────────────┘
              │ OK
@@ -82,7 +88,11 @@ API 文件：[http://localhost:8000/docs](http://localhost:8000/docs)
 ```bash
 curl -X POST http://localhost:8000/api/v1/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "我最近壓力很大，不知道怎麼辦。", "history": []}'
+  -d '{"session_id": "demo-session-001", "message": "我最近壓力很大，不知道怎麼辦。", "history": []}'
+
+curl -X POST http://localhost:8000/api/v1/reset \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "demo-session-001"}'
 ```
 
 ---
@@ -105,6 +115,7 @@ Gateway 測試不需要真實 API Key，可離線執行。
 
 ```json
 {
+  "session_id": "使用者會話 ID（建議 UUID）",
   "message": "用戶輸入文字（最多 1500 字）",
   "history": [
     {"role": "user", "content": "上一輪用戶訊息"},
@@ -112,6 +123,8 @@ Gateway 測試不需要真實 API Key，可離線執行。
   ]
 }
 ```
+
+`history` 僅保留向後相容用途；伺服器端會以 `session_id` 對應的記憶為主要上下文來源。
 
 **Response**
 
@@ -128,6 +141,24 @@ Gateway 測試不需要真實 API Key，可離線執行。
 | `reply` | AI 回覆（或安全替換回覆） |
 | `intercepted` | `true` 表示觸發了 Gateway 攔截 |
 | `crisis` | `true` 表示偵測到危機情況，回覆已替換為緊急資源 |
+
+### `POST /api/v1/reset`
+
+**Request Body**
+
+```json
+{
+  "session_id": "要清除的會話 ID"
+}
+```
+
+**Response**
+
+```json
+{
+  "status": "cleared"
+}
+```
 
 ---
 
@@ -156,6 +187,9 @@ PeaceMind/
 │   ├── gateways/
 │   │   ├── input_gateway.py    # Layer 1：輸入檢查
 │   │   └── output_gateway.py   # Layer 3：輸出掃描
+│   ├── storage/
+│   │   ├── conversation_store.py # 記憶儲存介面（可替換）
+│   │   └── in_memory_store.py    # PoC 會話記憶（in-memory）
 │   ├── core/
 │   │   ├── llm_client.py       # Layer 2：Azure OpenAI 客戶端
 │   │   └── crisis_handler.py   # 危機介入回覆

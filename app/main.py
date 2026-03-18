@@ -54,6 +54,7 @@ async def root():
         "description": "心理諮詢 AI 助理 Boon — Backend API",
         "docs": "/docs",
         "chat": "/api/v1/chat",
+        "reset": "/api/v1/reset",
     }
 
 

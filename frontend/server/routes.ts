@@ -36,5 +36,23 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/v1/reset", async (req: Request, res: Response) => {
+    try {
+      const response = await fetch(`${FASTAPI_URL}/api/v1/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req.body),
+      });
+      const data = await response.json();
+      if (!response.ok) return res.status(response.status).json(data);
+      return res.json(data);
+    } catch (err) {
+      console.error("[proxy] FastAPI unreachable:", err);
+      return res.status(503).json({
+        status: "unavailable",
+      });
+    }
+  });
+
   return httpServer;
 }

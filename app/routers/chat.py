@@ -14,6 +14,7 @@ from app.gateways.input_gateway import check_input, InputStatus
 from app.gateways.output_gateway import check_output, OutputStatus
 from app.core.llm_client import chat_with_llm
 from app.core.crisis_handler import get_crisis_response
+from app.storage import conversation_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -25,7 +26,9 @@ class Message(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    session_id: str = Field(..., min_length=8, max_length=128)
     message: str = Field(..., min_length=1, max_length=1600)
+    # Legacy compatibility only. Server-side memory is authoritative.
     history: list[Message] = Field(default_factory=list, max_length=20)
 
 
@@ -33,6 +36,14 @@ class ChatResponse(BaseModel):
     reply: str
     intercepted: bool = False
     crisis: bool = False
+
+
+class ResetRequest(BaseModel):
+    session_id: str = Field(..., min_length=8, max_length=128)
+
+
+class ResetResponse(BaseModel):
+    status: str
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -44,7 +55,9 @@ async def chat(request: ChatRequest):
     2. LLM Core → 三明治結構推理
     3. Output Gateway → 藥名/診斷/洩漏掃描
     """
+    session_id = request.session_id.strip()
     user_message = request.message.strip()
+    history = conversation_store.get_history(session_id)
 
     # ── Layer 1: Input Gateway ──────────────────────────────────
     input_result = check_input(user_message)
@@ -56,11 +69,11 @@ async def chat(request: ChatRequest):
     if input_result.status == InputStatus.CRISIS:
         logger.warning("CRISIS detected | input_snippet=%s", user_message[:50])
         crisis_reply = get_crisis_response(user_message)
+        conversation_store.append(session_id, "user", user_message)
+        conversation_store.append(session_id, "assistant", crisis_reply)
         return ChatResponse(reply=crisis_reply, crisis=True)
 
     # ── Layer 2: LLM Core ───────────────────────────────────────
-    history = [msg.model_dump() for msg in request.history]
-
     try:
         llm_reply = chat_with_llm(user_message, conversation_history=history)
     except Exception as e:
@@ -79,6 +92,16 @@ async def chat(request: ChatRequest):
             output_result.triggered_rule,
             llm_reply[:80],
         )
+        conversation_store.append(session_id, "user", user_message)
+        conversation_store.append(session_id, "assistant", output_result.response)
         return ChatResponse(reply=output_result.response, intercepted=True)
 
+    conversation_store.append(session_id, "user", user_message)
+    conversation_store.append(session_id, "assistant", output_result.response)
     return ChatResponse(reply=output_result.response)
+
+
+@router.post("/reset", response_model=ResetResponse)
+async def reset(request: ResetRequest):
+    conversation_store.reset(request.session_id.strip())
+    return ResetResponse(status="cleared")

@@ -14,6 +14,7 @@
       │  VITE_API_URL
       ▼
 [Vercel — peacemind-api]     FastAPI 後端 (Python Serverless)
+      │  Session Memory（PoC: in-memory, per instance）
       │
       ▼
 [Azure OpenAI]               GPT-4o
@@ -56,6 +57,11 @@ https://peacemind-api.vercel.app
 ```bash
 curl https://peacemind-api.vercel.app/health
 # 應回傳：{"status":"ok","service":"PeaceMind","version":"0.1.0"}
+
+curl -X POST https://peacemind-api.vercel.app/api/v1/reset \
+      -H "Content-Type: application/json" \
+      -d '{"session_id":"deploy-check-session"}'
+# 應回傳：{"status":"cleared"}
 ```
 
 ---
@@ -127,3 +133,5 @@ npm run dev            # :5000 → proxy → :8000
 | **Timeout** | Vercel Hobby tier 函式 timeout 為 10 秒，足夠 LLM 呼叫 |
 | **免費額度** | Hobby tier 每月 100GB bandwidth + 100K function invocations |
 | **Secrets** | `.env` 不要 commit，環境變數只在 Vercel Dashboard 設定 |
+| **Session Memory（PoC）** | 目前為 in-memory；在多實例或服務重啟時可能遺失，正式環境建議改用 Redis/DB |
+| **Reset API** | `POST /api/v1/reset` 會清空指定 `session_id` 的後端會話記憶 |

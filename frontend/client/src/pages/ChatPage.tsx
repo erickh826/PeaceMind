@@ -7,12 +7,13 @@ import TypingIndicator from "@/components/TypingIndicator";
 import CrisisCard from "@/components/CrisisCard";
 import CharCounter from "@/components/CharCounter";
 import PerplexityAttribution from "@/components/PerplexityAttribution";
-import { Send, Moon, Sun } from "lucide-react";
+import { Send, Moon, Sun, RotateCcw } from "lucide-react";
 
 // ── Constants ─────────────────────────────────────────────────
 const MAX_CHARS = 1000;
 const WARN_THRESHOLD = 800;   // 橘色提示開始
 const SOFT_CAP = 950;          // 友善文案切換
+const SESSION_STORAGE_KEY = "boon_session_id";
 
 export interface ChatMessage {
   id: string;
@@ -28,22 +29,35 @@ interface ApiResponse {
 }
 
 // ── Welcome message ───────────────────────────────────────────
-const WELCOME: ChatMessage = {
+const createWelcomeMessage = (): ChatMessage => ({
   id: "welcome",
   role: "assistant",
   content:
     "你好，我是 Boon。\n\n不管你現在心情如何，我都在這裡陪你。有什麼想說的，或者想聊聊今天的心情嗎？",
   timestamp: new Date(),
+});
+
+const getOrCreateSessionId = () => {
+  const existing = window.localStorage.getItem(SESSION_STORAGE_KEY);
+  if (existing) return existing;
+
+  const created = crypto.randomUUID();
+  window.localStorage.setItem(SESSION_STORAGE_KEY, created);
+  return created;
 };
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
+  const [messages, setMessages] = useState<ChatMessage[]>([createWelcomeMessage()]);
   const [input, setInput] = useState("");
+  const [sessionId, setSessionId] = useState(getOrCreateSessionId);
+  const [isResetting, setIsResetting] = useState(false);
   const [darkMode, setDarkMode] = useState(
     window.matchMedia("(prefers-color-scheme: dark)").matches
   );
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const resetEpochRef = useRef(0);
 
   // Dark mode toggle
   useEffect(() => {
@@ -54,6 +68,10 @@ export default function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    window.localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+  }, [sessionId]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -78,15 +96,28 @@ export default function ChatPage() {
       }));
   }, [messages]);
 
-  const mutation = useMutation({
+  const mutation = useMutation<
+    { data: ApiResponse; epoch: number },
+    Error,
+    string
+  >({
     mutationFn: async (text: string) => {
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const epoch = resetEpochRef.current;
       const res = await apiRequest("POST", "/api/v1/chat", {
+        session_id: sessionId,
         message: text,
         history: getHistory(),
-      });
-      return res.json() as Promise<ApiResponse>;
+      }, { signal: controller.signal });
+      const data = (await res.json()) as ApiResponse;
+      return { data, epoch };
     },
-    onSuccess: (data) => {
+    onSuccess: ({ data, epoch }) => {
+      if (epoch !== resetEpochRef.current) {
+        return;
+      }
+
       const role: ChatMessage["role"] = data.crisis
         ? "crisis"
         : data.intercepted
@@ -103,7 +134,11 @@ export default function ChatPage() {
         },
       ]);
     },
-    onError: () => {
+    onError: (error) => {
+      if (error.name === "AbortError") {
+        return;
+      }
+
       setMessages((prev) => [
         ...prev,
         {
@@ -115,11 +150,14 @@ export default function ChatPage() {
         },
       ]);
     },
+    onSettled: () => {
+      abortRef.current = null;
+    },
   });
 
   const handleSend = () => {
     const text = input.trim();
-    if (!text || isOverLimit || mutation.isPending) return;
+    if (!text || isOverLimit || mutation.isPending || isResetting) return;
 
     setMessages((prev) => [
       ...prev,
@@ -132,6 +170,31 @@ export default function ChatPage() {
     ]);
     setInput("");
     mutation.mutate(text);
+  };
+
+  const handleReset = async () => {
+    if (isResetting) return;
+
+    setIsResetting(true);
+    resetEpochRef.current += 1;
+    abortRef.current?.abort();
+
+    const previousSession = sessionId;
+
+    try {
+      await apiRequest("POST", "/api/v1/reset", {
+        session_id: previousSession,
+      });
+    } catch {
+      // Fallback: rotate to a fresh session even if network reset fails.
+    }
+
+    const newSessionId = crypto.randomUUID();
+    setSessionId(newSessionId);
+    setInput("");
+    mutation.reset();
+    setMessages([createWelcomeMessage()]);
+    setIsResetting(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -168,6 +231,18 @@ export default function ChatPage() {
           <span className="hidden sm:block text-xs text-muted-foreground px-2 py-1 rounded-full bg-muted border border-border">
             非醫療用途 · PoC
           </span>
+          <button
+            onClick={handleReset}
+            className="px-3 py-2 rounded-full border border-border hover:bg-muted transition-colors text-xs text-muted-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="重置對話"
+            data-testid="button-reset-chat"
+            disabled={isResetting}
+          >
+            <span className="inline-flex items-center gap-1">
+              <RotateCcw size={14} />
+              {isResetting ? "重置中" : "重置"}
+            </span>
+          </button>
           <button
             onClick={() => setDarkMode((d) => !d)}
             className="p-2 rounded-full hover:bg-muted transition-colors"
@@ -237,7 +312,7 @@ export default function ChatPage() {
               placeholder="跟我說說你現在的感受…"
               rows={1}
               maxLength={MAX_CHARS + 50}
-              disabled={mutation.isPending}
+              disabled={mutation.isPending || isResetting}
               className="flex-1 resize-none bg-transparent outline-none text-foreground placeholder:text-muted-foreground text-base leading-relaxed disabled:opacity-50"
               style={{ minHeight: "24px", maxHeight: "180px" }}
               data-testid="input-message"
@@ -247,7 +322,7 @@ export default function ChatPage() {
               <CharCounter count={charCount} max={MAX_CHARS} warn={WARN_THRESHOLD} />
               <button
                 onClick={handleSend}
-                disabled={!input.trim() || isOverLimit || mutation.isPending}
+                disabled={!input.trim() || isOverLimit || mutation.isPending || isResetting}
                 className="p-2 rounded-xl bg-primary text-primary-foreground hover:opacity-90 active:scale-95 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
                 aria-label="送出訊息"
                 data-testid="button-send"

@@ -27,6 +27,7 @@ export async function apiRequest(
   method: string,
   url: string,
   data?: unknown,
+  options?: { signal?: AbortSignal },
 ): Promise<Response> {
   const headers: Record<string, string> = data
     ? { "Content-Type": "application/json" }
@@ -36,6 +37,7 @@ export async function apiRequest(
     method,
     headers,
     body: data ? JSON.stringify(data) : undefined,
+    signal: options?.signal,
   });
 
   await throwIfResNotOk(res);

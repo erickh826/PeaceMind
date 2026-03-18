@@ -14,7 +14,9 @@ Phase 4 Red Team 達到 99.3% 測試通過率，防禦機制以 Regex 黑名單�
 | 風險 | Regex 的極限 |
 |------|------------|
 | 語義/編碼繞過 | 死背單字，不理解意圖；Base64、Leetspeak、同義詞全部可繞過 |
-| 多輪對話注入 | Stateless（無狀態），只看單句，無法偵測「溫水煮青蛙」式漸進越獄 |
+| 多輪對話注入 | 若完全 Stateless（無狀態）只看單句，無法偵測「溫水煮青蛙」式漸進越獄 |
+
+> 註：目前 PoC 已引入 `session_id` 對應的 Session Memory（in-memory）與 `POST /api/v1/reset`，可建立會話邊界並部分緩解 Stateless 風險；但在多實例部署下仍需共享儲存（Redis/DB）才能保證一致性。
 
 Phase 5 目標：**不取代 Regex**，而是在其上疊加兩層語意感知防禦，構成真正的 Defense-in-Depth。
 
@@ -26,6 +28,13 @@ Phase 5 目標：**不取代 Regex**，而是在其上疊加兩層語意感知�
 使用者輸入（單句）
         │
         ▼
+┌──────────────────────────────────────────┐
+│  Session Memory Store（PoC 已實作）       │
+│  • 以 session_id 讀寫最近 N 則對話         │
+│  • POST /api/v1/reset 清空指定會話         │
+└───────────────────┬──────────────────────┘
+            │
+            ▼
 ┌──────────────────────────────────────────┐
 │  Layer 1a: Regex Gateway（現有）          │
 │  • 長度限制 1500 字                        │
@@ -233,6 +242,8 @@ async def check_embedding_drift(user_input: str) -> bool:
 ---
 
 ## Phase 5b：Multi-turn Risk Scorer
+
+前置依賴：需有可用的多輪會話上下文。PoC 可先使用現有 Session Memory，生產環境建議改為共享儲存（Redis/DB）避免跨實例記憶漂移。
 
 ### 問題
 
