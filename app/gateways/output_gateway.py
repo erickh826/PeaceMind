@@ -14,6 +14,36 @@ class OutputStatus(str, Enum):
     INTERCEPTED = "intercepted"
 
 
+UNSUPPORTED_SCRIPT_RESPONSE = (
+    "我收到你的訊息了。"
+    "不過我目前只能以繁體中文、粵語或英文提供支援。"
+    "你可以用這些語言再跟我說一次，我會繼續陪你。"
+)
+
+_JAPANESE_KANA = re.compile(r"[\u3040-\u30ff]")
+_HANGUL = re.compile(r"[\uac00-\ud7af]")
+_CYRILLIC = re.compile(r"[\u0400-\u04ff]")
+
+
+def _script_hit_ratio(text: str, pattern: re.Pattern[str]) -> tuple[int, float]:
+    visible_chars = [ch for ch in text if not ch.isspace()]
+    if not visible_chars:
+        return 0, 0.0
+
+    hits = len(pattern.findall(text))
+    ratio = hits / len(visible_chars)
+    return hits, ratio
+
+
+def _has_excessive_unsupported_script(text: str) -> bool:
+    # Treat as suspicious only when both absolute and relative signals are high.
+    for pattern in (_JAPANESE_KANA, _HANGUL, _CYRILLIC):
+        hits, ratio = _script_hit_ratio(text, pattern)
+        if hits >= 8 and ratio >= 0.25:
+            return True
+    return False
+
+
 # 處方藥名清單（常見精神科藥物）
 PRESCRIPTION_DRUGS = [
     r"\bXanax\b", r"\bProzac\b", r"\bZoloft\b", r"\bLexapro\b",
@@ -74,6 +104,13 @@ def check_output(llm_response: str) -> OutputResult:
     3. 系統資訊洩漏
     觸發任一規則時攔截並替換為安全回覆。
     """
+    if _has_excessive_unsupported_script(llm_response):
+        return OutputResult(
+            status=OutputStatus.INTERCEPTED,
+            response=UNSUPPORTED_SCRIPT_RESPONSE,
+            triggered_rule="unsupported_script",
+        )
+
     all_patterns = (
         [(p, "prescription_drug") for p in PRESCRIPTION_DRUGS]
         + [(p, "diagnosis_term") for p in DIAGNOSIS_TERMS]
