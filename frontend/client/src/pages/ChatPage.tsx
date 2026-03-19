@@ -7,7 +7,8 @@ import TypingIndicator from "@/components/TypingIndicator";
 import CrisisCard from "@/components/CrisisCard";
 import CharCounter from "@/components/CharCounter";
 import PerplexityAttribution from "@/components/PerplexityAttribution";
-import { Send, Moon, Sun, RotateCcw } from "lucide-react";
+import { Link } from "wouter";
+import { Send, Moon, Sun, RotateCcw, BookOpen } from "lucide-react";
 
 // ── Constants ─────────────────────────────────────────────────
 const MAX_CHARS = 1000;
@@ -207,6 +208,19 @@ export default function ChatPage() {
           <span className="hidden sm:block text-xs text-muted-foreground px-2 py-1 rounded-full bg-muted border border-border">
             非醫療用途 · PoC
           </span>
+
+          {/* ── Courses link ── */}
+          <Link href="/courses">
+            <button
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-full border border-border hover:bg-muted"
+              aria-label="課程資源"
+              data-testid="link-courses"
+              title="自學資源 · 影片課堂"
+            >
+              <BookOpen size={13} />
+              <span className="hidden sm:inline">課程資源</span>
+            </button>
+          </Link>
 
           {/* ── Reset button ── */}
           <button
