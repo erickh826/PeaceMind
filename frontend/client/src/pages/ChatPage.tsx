@@ -18,6 +18,7 @@ interface CourseRec {
   category: string;
   categoryStyle: string;
   note: string;
+  introLine: string;  // Boon自然引入的一句話，顯示在 rec card 上方
 }
 
 // keyword → course mapping (ordered: first match wins)
@@ -31,6 +32,7 @@ const REC_RULES: Array<{ keywords: RegExp; course: CourseRec }> = [
       category: "靜觀冥想",
       categoryStyle: "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300",
       note: "三分鐘就夠，隨時隨地重設一下自己。",
+      introLine: "不如先停一停，試下這個三分鐘靜觀，幫自己重設一下？",
     },
   },
   {
@@ -42,6 +44,7 @@ const REC_RULES: Array<{ keywords: RegExp; course: CourseRec }> = [
       category: "情緒管理",
       categoryStyle: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
       note: "心理師親身示範，幫你在焦慮湧現時找回掌控感。",
+      introLine: "你可以先看下影片裡提到的「實務性擔心」同「假設性擔心」，看看能唔能幫你 trigger 到一些新診法：",
     },
   },
   {
@@ -53,6 +56,7 @@ const REC_RULES: Array<{ keywords: RegExp; course: CourseRec }> = [
       category: "大腦科學",
       categoryStyle: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
       note: "了解情緒背後的大腦機制，才能真正管理它。",
+      introLine: "不如先看看這個介紹，了解下我們的大腦其實個個都在投入你的感受：",
     },
   },
   {
@@ -64,6 +68,7 @@ const REC_RULES: Array<{ keywords: RegExp; course: CourseRec }> = [
       category: "自我提升",
       categoryStyle: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300",
       note: "拖延不是懶，是情緒調節問題。三步驟打破循環。",
+      introLine: "這個三步驟對我自己都很有用，不如一山試看：",
     },
   },
   {
@@ -75,6 +80,7 @@ const REC_RULES: Array<{ keywords: RegExp; course: CourseRec }> = [
       category: "正向思維",
       categoryStyle: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300",
       note: "用廣東話溫柔地與自己對話，每天十分鐘。",
+      introLine: "你願意的話，每天生活就從這十分鐘開始：",
     },
   },
   {
@@ -86,6 +92,7 @@ const REC_RULES: Array<{ keywords: RegExp; course: CourseRec }> = [
       category: "人際關係",
       categoryStyle: "bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-300",
       note: "辨識關係中的邊界，學懂愛自己才是真正的愛。",
+      introLine: "不如先看看這個，有時候看清自己在一段關係裡的角色，反而能幫你看清很多事：",
     },
   },
   {
@@ -97,11 +104,12 @@ const REC_RULES: Array<{ keywords: RegExp; course: CourseRec }> = [
       category: "內在療癒",
       categoryStyle: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
       note: "與自己的內在小孩和解，重新連結內心深處的自己。",
+      introLine: "我覺得你说的跟這個小孩很有關係，不如看看你有沒有共鳴：",
     },
   },
   // Fallback: stress / burnout / general 壓力 → mindful
   {
-    keywords: /壓力|burnout|burnout|透唔過氣|喘不過氣|累|身心疲憊|攰|煩/i,
+    keywords: /壓力|burnout|透唔過氣|喘不過氣|累|身心疲憊|攰|煩/i,
     course: {
       id: "mindful-3min",
       title: "【靜觀冥想】靜觀三分鐘",
@@ -109,6 +117,7 @@ const REC_RULES: Array<{ keywords: RegExp; course: CourseRec }> = [
       category: "靜觀冥想",
       categoryStyle: "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300",
       note: "先喘口氣，三分鐘靜觀幫你重拾一點空間。",
+      introLine: "聴起來你現在很需要一個嗘氣空間。不如先試看這個：",
     },
   },
 ];
@@ -170,9 +179,13 @@ function RecCard({ rec }: { rec: CourseRec }) {
   const thumb = `https://img.youtube.com/vi/${rec.youtubeId}/mqdefault.jpg`;
   return (
     <>
+      {/* Intro line — natural lead-in sentence above the card */}
+      <p className="ml-[42px] mt-2 text-xs text-muted-foreground italic leading-relaxed max-w-[78%] sm:max-w-[65%]">
+        {rec.introLine}
+      </p>
       <div
         onClick={() => setOpen(true)}
-        className="ml-[42px] mt-2 flex gap-3 p-3 rounded-2xl border border-border bg-card/80 hover:bg-card hover:shadow-md transition-all duration-200 cursor-pointer group max-w-[78%] sm:max-w-[65%]"
+        className="ml-[42px] mt-1.5 flex gap-3 p-3 rounded-2xl border border-border bg-card/80 hover:bg-card hover:shadow-md transition-all duration-200 cursor-pointer group max-w-[78%] sm:max-w-[65%]"
         data-testid={`rec-card-${rec.id}`}
       >
         {/* Thumbnail */}
