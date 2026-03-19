@@ -120,12 +120,58 @@ function matchRecommendation(text: string): CourseRec | null {
   return null;
 }
 
+// ── Inline Video Modal (opened from RecCard) ─────────────────────────────────
+function VideoModal({ rec, onClose }: { rec: CourseRec; onClose: () => void }) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="relative w-full max-w-2xl bg-card rounded-2xl overflow-hidden shadow-2xl">
+        <div className="aspect-video w-full bg-black">
+          <iframe
+            src={`https://www.youtube.com/embed/${rec.youtubeId}?autoplay=1&rel=0`}
+            title={rec.title}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            className="w-full h-full"
+          />
+        </div>
+        <div className="px-4 py-3 flex items-start justify-between gap-3">
+          <div className="flex-1">
+            <span className={`inline-block text-[10px] font-medium px-2 py-0.5 rounded-full mb-1.5 ${rec.categoryStyle}`}>
+              {rec.category}
+            </span>
+            <p className="text-sm font-semibold text-foreground leading-snug">{rec.title}</p>
+            <p className="text-xs text-muted-foreground mt-1 italic leading-relaxed">{rec.note}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="shrink-0 p-2 rounded-full hover:bg-muted transition-colors text-muted-foreground text-lg leading-none"
+            aria-label="關閉"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Inline Recommendation Card (shown below Boon's bubble) ───────────────────
 function RecCard({ rec }: { rec: CourseRec }) {
+  const [open, setOpen] = useState(false);
   const thumb = `https://img.youtube.com/vi/${rec.youtubeId}/mqdefault.jpg`;
   return (
-    <Link href={`/courses#${rec.id}`}>
+    <>
       <div
+        onClick={() => setOpen(true)}
         className="ml-[42px] mt-2 flex gap-3 p-3 rounded-2xl border border-border bg-card/80 hover:bg-card hover:shadow-md transition-all duration-200 cursor-pointer group max-w-[78%] sm:max-w-[65%]"
         data-testid={`rec-card-${rec.id}`}
       >
@@ -147,7 +193,7 @@ function RecCard({ rec }: { rec: CourseRec }) {
             <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${rec.categoryStyle}`}>
               {rec.category}
             </span>
-            <span className="text-[10px] font-semibold text-primary">阿本推薦</span>
+            <span className="text-[10px] font-semibold text-primary">阿本推薦 ▶</span>
           </div>
           <p className="text-xs font-semibold text-foreground leading-snug line-clamp-2">
             {rec.title}
@@ -157,7 +203,8 @@ function RecCard({ rec }: { rec: CourseRec }) {
           </p>
         </div>
       </div>
-    </Link>
+      {open && <VideoModal rec={rec} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 
