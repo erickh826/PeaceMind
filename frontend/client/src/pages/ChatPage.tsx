@@ -8,7 +8,158 @@ import CrisisCard from "@/components/CrisisCard";
 import CharCounter from "@/components/CharCounter";
 import PerplexityAttribution from "@/components/PerplexityAttribution";
 import { Link } from "wouter";
-import { Send, Moon, Sun, RotateCcw, BookOpen } from "lucide-react";
+import { Send, Moon, Sun, RotateCcw, BookOpen, Play } from "lucide-react";
+
+// ── Recommendation engine ─────────────────────────────────────────────────────
+interface CourseRec {
+  id: string;
+  title: string;
+  youtubeId: string;
+  category: string;
+  categoryStyle: string;
+  note: string;
+}
+
+// keyword → course mapping (ordered: first match wins)
+const REC_RULES: Array<{ keywords: RegExp; course: CourseRec }> = [
+  {
+    keywords: /靜觀|冥想|breathe|呼吸|平靜|放鬆|reset|五分鐘|3分鐘|三分鐘/i,
+    course: {
+      id: "mindful-3min",
+      title: "【靜觀冥想】靜觀三分鐘",
+      youtubeId: "846VoF-JPno",
+      category: "靜觀冥想",
+      categoryStyle: "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300",
+      note: "三分鐘就夠，隨時隨地重設一下自己。",
+    },
+  },
+  {
+    keywords: /焦慮|擔心|緊張|不安|anxiety|worry|惶恐|慌/i,
+    course: {
+      id: "anxiety-relief",
+      title: "當焦慮感來襲，心理師教你這樣做",
+      youtubeId: "bY4Ux7K-LAs",
+      category: "情緒管理",
+      categoryStyle: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
+      note: "心理師親身示範，幫你在焦慮湧現時找回掌控感。",
+    },
+  },
+  {
+    keywords: /情緒|憤怒|難過|傷心|崩潰|大腦|科學|神經|emotion|感受/i,
+    course: {
+      id: "brain-emotion",
+      title: "如何管理情緒？從大腦科學的角度來看",
+      youtubeId: "27zBdxVGBOU",
+      category: "大腦科學",
+      categoryStyle: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+      note: "了解情緒背後的大腦機制，才能真正管理它。",
+    },
+  },
+  {
+    keywords: /拖延|procrastin|唔想做|做唔到|懶|deadline|沒動力|冇動力/i,
+    course: {
+      id: "procrastination",
+      title: "三步驟教你改善拖延症！",
+      youtubeId: "SVP10jrnkb0",
+      category: "自我提升",
+      categoryStyle: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300",
+      note: "拖延不是懶，是情緒調節問題。三步驟打破循環。",
+    },
+  },
+  {
+    keywords: /正向|肯定|自信|affirmation|自我價值|自尊|積極/i,
+    course: {
+      id: "affirmations",
+      title: "每日 10 分鐘 廣東話肯定句",
+      youtubeId: "-2KNgktM6Vo",
+      category: "正向思維",
+      categoryStyle: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300",
+      note: "用廣東話溫柔地與自己對話，每天十分鐘。",
+    },
+  },
+  {
+    keywords: /關係|愛情|伴侶|另一半|分手|界線|boundary|沉船|toxic/i,
+    course: {
+      id: "love-boundary",
+      title: "沉船其實不是愛",
+      youtubeId: "ys7gELVX174",
+      category: "人際關係",
+      categoryStyle: "bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-300",
+      note: "辨識關係中的邊界，學懂愛自己才是真正的愛。",
+    },
+  },
+  {
+    keywords: /內在|小孩|童年|原生家庭|inner child|療癒|heal|創傷|trauma/i,
+    course: {
+      id: "inner-child",
+      title: "療癒你的內在小孩",
+      youtubeId: "rJ-2DXLVDEY",
+      category: "內在療癒",
+      categoryStyle: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
+      note: "與自己的內在小孩和解，重新連結內心深處的自己。",
+    },
+  },
+  // Fallback: stress / burnout / general 壓力 → mindful
+  {
+    keywords: /壓力|burnout|burnout|透唔過氣|喘不過氣|累|身心疲憊|攰|煩/i,
+    course: {
+      id: "mindful-3min",
+      title: "【靜觀冥想】靜觀三分鐘",
+      youtubeId: "846VoF-JPno",
+      category: "靜觀冥想",
+      categoryStyle: "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300",
+      note: "先喘口氣，三分鐘靜觀幫你重拾一點空間。",
+    },
+  },
+];
+
+function matchRecommendation(text: string): CourseRec | null {
+  for (const rule of REC_RULES) {
+    if (rule.keywords.test(text)) return rule.course;
+  }
+  return null;
+}
+
+// ── Inline Recommendation Card (shown below Boon's bubble) ───────────────────
+function RecCard({ rec }: { rec: CourseRec }) {
+  const thumb = `https://img.youtube.com/vi/${rec.youtubeId}/mqdefault.jpg`;
+  return (
+    <Link href={`/courses#${rec.id}`}>
+      <div
+        className="ml-[42px] mt-2 flex gap-3 p-3 rounded-2xl border border-border bg-card/80 hover:bg-card hover:shadow-md transition-all duration-200 cursor-pointer group max-w-[78%] sm:max-w-[65%]"
+        data-testid={`rec-card-${rec.id}`}
+      >
+        {/* Thumbnail */}
+        <div className="relative shrink-0 w-20 h-14 rounded-xl overflow-hidden bg-muted">
+          <img
+            src={thumb}
+            alt={rec.title}
+            className="w-full h-full object-cover group-hover:brightness-90 transition-all"
+            loading="lazy"
+          />
+          <div className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity">
+            <Play size={14} className="text-white fill-white" />
+          </div>
+        </div>
+        {/* Text */}
+        <div className="flex flex-col flex-1 min-w-0 justify-center gap-1">
+          <div className="flex items-center gap-1.5">
+            <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${rec.categoryStyle}`}>
+              {rec.category}
+            </span>
+            <span className="text-[10px] font-semibold text-primary">阿本推薦</span>
+          </div>
+          <p className="text-xs font-semibold text-foreground leading-snug line-clamp-2">
+            {rec.title}
+          </p>
+          <p className="text-[11px] text-muted-foreground leading-relaxed line-clamp-2 italic">
+            {rec.note}
+          </p>
+        </div>
+      </div>
+    </Link>
+  );
+}
 
 // ── Constants ─────────────────────────────────────────────────
 const MAX_CHARS = 1000;
@@ -20,6 +171,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "crisis" | "intercepted";
   content: string;
   timestamp: Date;
+  rec?: CourseRec | null;  // optional recommendation attached to assistant messages
 }
 
 interface ApiResponse {
@@ -75,6 +227,9 @@ export default function ChatPage() {
   const isOverLimit = charCount > MAX_CHARS;
   const isWarning = charCount >= WARN_THRESHOLD && !isOverLimit;
 
+  // Track last user text so we can match recommendation after reply arrives
+  const lastUserTextRef = useRef<string>("");
+
   // ── Chat mutation — sends session_id so backend uses server-side memory ──
   const mutation = useMutation({
     mutationFn: async (text: string) => {
@@ -92,6 +247,11 @@ export default function ChatPage() {
         ? "intercepted"
         : "assistant";
 
+      // Match recommendation from the user's message text
+      const rec = role === "assistant"
+        ? matchRecommendation(lastUserTextRef.current)
+        : null;
+
       setMessages((prev) => [
         ...prev,
         {
@@ -99,6 +259,7 @@ export default function ChatPage() {
           role,
           content: data.reply,
           timestamp: new Date(),
+          rec,
         },
       ]);
     },
@@ -160,6 +321,9 @@ export default function ChatPage() {
       setResetConfirm(false);
       if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
     }
+
+    // Store user text for recommendation matching after reply
+    lastUserTextRef.current = text;
 
     setMessages((prev) => [
       ...prev,
@@ -269,7 +433,13 @@ export default function ChatPage() {
             msg.role === "crisis" ? (
               <CrisisCard key={msg.id} content={msg.content} />
             ) : (
-              <MessageBubble key={msg.id} message={msg} />
+              <div key={msg.id}>
+                <MessageBubble message={msg} />
+                {/* Inline recommendation card — only on assistant replies with a match */}
+                {msg.role === "assistant" && msg.rec && (
+                  <RecCard rec={msg.rec} />
+                )}
+              </div>
             )
           )}
           {mutation.isPending && <TypingIndicator />}
