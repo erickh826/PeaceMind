@@ -15,25 +15,42 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
-  // Local-dev proxy: /api/v1/* → FastAPI backend
-  app.post("/api/v1/chat", async (req: Request, res: Response) => {
+  // ── Helper: forward a POST request to FastAPI ──────────────────────────
+  const proxyPost = async (
+    path: string,
+    req: Request,
+    res: Response
+  ): Promise<void> => {
     try {
-      const response = await fetch(`${FASTAPI_URL}/api/v1/chat`, {
+      const response = await fetch(`${FASTAPI_URL}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(req.body),
       });
       const data = await response.json();
-      if (!response.ok) return res.status(response.status).json(data);
-      return res.json(data);
+      if (!response.ok) {
+        res.status(response.status).json(data);
+        return;
+      }
+      res.json(data);
     } catch (err) {
-      console.error("[proxy] FastAPI unreachable:", err);
-      return res.status(503).json({
+      console.error(`[proxy] FastAPI unreachable at ${path}:`, err);
+      res.status(503).json({
         reply: "服務暫時無法使用，請稍後再試。如有緊急情況請致電 999。",
         intercepted: true,
         crisis: false,
       });
     }
+  };
+
+  // POST /api/v1/chat — main chat endpoint (with server-side memory)
+  app.post("/api/v1/chat", (req: Request, res: Response) => {
+    proxyPost("/api/v1/chat", req, res);
+  });
+
+  // POST /api/v1/reset — clear session memory on backend
+  app.post("/api/v1/reset", (req: Request, res: Response) => {
+    proxyPost("/api/v1/reset", req, res);
   });
 
   return httpServer;

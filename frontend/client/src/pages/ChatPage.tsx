@@ -7,7 +7,7 @@ import TypingIndicator from "@/components/TypingIndicator";
 import CrisisCard from "@/components/CrisisCard";
 import CharCounter from "@/components/CharCounter";
 import PerplexityAttribution from "@/components/PerplexityAttribution";
-import { Send, Moon, Sun } from "lucide-react";
+import { Send, Moon, Sun, RotateCcw } from "lucide-react";
 
 // ── Constants ─────────────────────────────────────────────────
 const MAX_CHARS = 1000;
@@ -25,25 +25,32 @@ interface ApiResponse {
   reply: string;
   intercepted: boolean;
   crisis: boolean;
+  session_id?: string | null;   // backend echoes session_id back
 }
 
 // ── Welcome message ───────────────────────────────────────────
-const WELCOME: ChatMessage = {
+const makeWelcome = (): ChatMessage => ({
   id: "welcome",
   role: "assistant",
   content:
     "你好，我是 Boon。\n\n不管你現在心情如何，我都在這裡陪你。有什麼想說的，或者想聊聊今天的心情嗎？",
   timestamp: new Date(),
-};
+});
+
+// ── Generate a stable session ID (React state, not localStorage) ──
+const newSessionId = () => crypto.randomUUID();
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
+  const [messages, setMessages] = useState<ChatMessage[]>([makeWelcome()]);
+  const [sessionId, setSessionId] = useState<string>(newSessionId);
   const [input, setInput] = useState("");
   const [darkMode, setDarkMode] = useState(
     window.matchMedia("(prefers-color-scheme: dark)").matches
   );
+  const [resetConfirm, setResetConfirm] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Dark mode toggle
   useEffect(() => {
@@ -67,22 +74,13 @@ export default function ChatPage() {
   const isOverLimit = charCount > MAX_CHARS;
   const isWarning = charCount >= WARN_THRESHOLD && !isOverLimit;
 
-  // Build conversation history (last 10 rounds = 20 messages, skip welcome)
-  const getHistory = useCallback(() => {
-    return messages
-      .filter((m) => m.role === "user" || m.role === "assistant")
-      .slice(-20)
-      .map((m) => ({
-        role: m.role === "user" ? "user" : "assistant",
-        content: m.content,
-      }));
-  }, [messages]);
-
+  // ── Chat mutation — sends session_id so backend uses server-side memory ──
   const mutation = useMutation({
     mutationFn: async (text: string) => {
       const res = await apiRequest("POST", "/api/v1/chat", {
         message: text,
-        history: getHistory(),
+        session_id: sessionId,
+        // history field omitted — backend uses server-side memory when session_id is present
       });
       return res.json() as Promise<ApiResponse>;
     },
@@ -117,9 +115,50 @@ export default function ChatPage() {
     },
   });
 
+  // ── Reset mutation — clears server-side memory and starts fresh ──
+  const resetMutation = useMutation({
+    mutationFn: async () => {
+      // Tell backend to clear the current session
+      await apiRequest("POST", "/api/v1/reset", { session_id: sessionId });
+    },
+    onSuccess: () => {
+      // Generate a new session ID and reset UI
+      setSessionId(newSessionId());
+      setMessages([makeWelcome()]);
+      setInput("");
+      setResetConfirm(false);
+    },
+    onError: () => {
+      // Even if server reset fails, reset client state
+      setSessionId(newSessionId());
+      setMessages([makeWelcome()]);
+      setInput("");
+      setResetConfirm(false);
+    },
+  });
+
+  // Two-step reset: first tap shows confirm state, second tap executes
+  const handleResetClick = () => {
+    if (resetConfirm) {
+      // Confirmed — execute reset
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+      resetMutation.mutate();
+    } else {
+      // First tap — enter confirm state, auto-cancel after 3s
+      setResetConfirm(true);
+      resetTimerRef.current = setTimeout(() => setResetConfirm(false), 3000);
+    }
+  };
+
   const handleSend = () => {
     const text = input.trim();
     if (!text || isOverLimit || mutation.isPending) return;
+
+    // Cancel any pending reset confirm
+    if (resetConfirm) {
+      setResetConfirm(false);
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    }
 
     setMessages((prev) => [
       ...prev,
@@ -168,6 +207,28 @@ export default function ChatPage() {
           <span className="hidden sm:block text-xs text-muted-foreground px-2 py-1 rounded-full bg-muted border border-border">
             非醫療用途 · PoC
           </span>
+
+          {/* ── Reset button ── */}
+          <button
+            onClick={handleResetClick}
+            disabled={resetMutation.isPending || mutation.isPending}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border disabled:opacity-40 disabled:cursor-not-allowed ${
+              resetConfirm
+                ? "bg-orange-100 dark:bg-orange-950/40 text-orange-700 dark:text-orange-400 border-orange-300 dark:border-orange-700"
+                : "bg-muted hover:bg-muted/80 text-muted-foreground border-border"
+            }`}
+            aria-label={resetConfirm ? "確認開始新對話" : "開始新對話"}
+            data-testid="button-reset"
+            title={resetConfirm ? "再按一次確認" : "開始新對話（清除記憶）"}
+          >
+            <RotateCcw
+              size={13}
+              className={resetMutation.isPending ? "animate-spin" : ""}
+            />
+            <span>{resetConfirm ? "確認清除？" : "新對話"}</span>
+          </button>
+
+          {/* ── Dark mode toggle ── */}
           <button
             onClick={() => setDarkMode((d) => !d)}
             className="p-2 rounded-full hover:bg-muted transition-colors"
