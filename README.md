@@ -175,8 +175,8 @@ PeaceMind/
 
 - [x] Phase 1：後端 API 架構 + Azure OpenAI 串接
 - [x] Phase 2：三層防禦機制 + 危機介入邏輯
-- [ ] Phase 3：前端 Web 聊天介面
-- [ ] Phase 4：Red Teaming 壓力測試
+- [x] Phase 3：前端 Web 聊天介面
+- [x] Phase 4：Red Teaming 壓力測試
 
 ---
 
