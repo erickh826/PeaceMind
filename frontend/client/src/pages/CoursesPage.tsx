@@ -14,7 +14,6 @@ import { Link } from "wouter";
 import BoonLogo from "@/components/BoonLogo";
 import { Moon, Sun, ArrowLeft, Play, Clock, Tag } from "lucide-react";
 import { useEffect } from "react";
-import PerplexityAttribution from "@/components/PerplexityAttribution";
 
 // ── Category tag colours (mirrors jcthplus pill tags) ──────────────────────
 const CATEGORY_STYLES: Record<string, string> = {
@@ -451,8 +450,6 @@ export default function CoursesPage() {
           </button>
         </Link>
       </div>
-
-      <PerplexityAttribution />
 
       {/* ── Video modal ── */}
       {playingCourse && (

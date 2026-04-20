@@ -6,7 +6,6 @@ import MessageBubble from "@/components/MessageBubble";
 import TypingIndicator from "@/components/TypingIndicator";
 import CrisisCard from "@/components/CrisisCard";
 import CharCounter from "@/components/CharCounter";
-import PerplexityAttribution from "@/components/PerplexityAttribution";
 import { Link } from "wouter";
 import { Send, Moon, Sun, RotateCcw, BookOpen, Play } from "lucide-react";
 
@@ -566,8 +565,6 @@ export default function ChatPage() {
           </p>
         </div>
       </footer>
-
-      <PerplexityAttribution />
     </div>
   );
 }
