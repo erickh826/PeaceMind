@@ -158,7 +158,12 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 1. **每個 Phase 內按 checkbox 順序做**，做完一項才進下一項。
 2. **每個 Phase 完成後跑一次現有測試**（`pytest tests/ -v`），確保沒有破壞既有五層防禦。
 3. **Migration 一律用 Alembic**，不手動改 schema，保留可回溯的版本歷史（呼應 T-Q8 的精神，連工程流程本身都要可回滾）。
-4. **目前狀態**：尚未開始，準備從 Phase 0.1 開始。
+4. **Git 工作流程**：
+   - 每個 Phase 從 `main` 開一個新 branch（例：`upgrade/phase0`, `upgrade/phase1`）
+   - Phase 完成、測試通過後，merge 回 `main`
+   - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
+   - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
+5. **目前狀態**：Phase 0 已完成並在真實 Postgres 驗證通過，`upgrade/phase0` 已推上 GitHub（commit `b4ba045`）。準備 merge 進 `main`，確認 deployment 後開始 Phase 1。
 
 ---
 
