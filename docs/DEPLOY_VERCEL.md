@@ -1,7 +1,7 @@
 # Vercel 部署指南 — PeaceMind
 
 本專案採用**前後端分離部署**，在 Vercel 建立兩個獨立 Project。
-
+trigger
 ---
 
 ## 已部署 URL
