@@ -78,7 +78,7 @@ docker compose up -d
 會在本機 `5433` port 起一個 `postgres:16`（避開常見的 5432 佔用）。啟動後在 `.env` 加上：
 
 ```
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/peacemind
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5433/peacemind
 ```
 
 接著跑 migration：

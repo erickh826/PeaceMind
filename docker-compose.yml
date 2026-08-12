@@ -6,7 +6,7 @@
 #   docker compose down -v        # 關閉並清空資料
 #
 # 啟動後在 .env 設定：
-#   DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/peacemind
+#   DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5433/peacemind
 #
 # 跑 migration：
 #   alembic upgrade head
