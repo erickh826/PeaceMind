@@ -16,13 +16,13 @@ class InMemoryConversationStore(ConversationStore):
         self._updated_at: dict[str, float] = {}
         self._lock = RLock()
 
-    def get_history(self, session_id: str) -> list[dict[str, str]]:
+    async def get_history(self, session_id: str) -> list[dict[str, str]]:
         with self._lock:
             self._prune_expired()
             history = self._sessions.get(session_id, [])
             return [msg.copy() for msg in history]
 
-    def append(self, session_id: str, role: str, content: str) -> None:
+    async def append(self, session_id: str, role: str, content: str) -> None:
         if role not in ("user", "assistant"):
             return
 
@@ -38,7 +38,7 @@ class InMemoryConversationStore(ConversationStore):
                 self._sessions[session_id] = bucket[-self.max_messages :]
             self._updated_at[session_id] = time.time()
 
-    def reset(self, session_id: str) -> None:
+    async def reset(self, session_id: str) -> None:
         with self._lock:
             self._sessions.pop(session_id, None)
             self._updated_at.pop(session_id, None)
