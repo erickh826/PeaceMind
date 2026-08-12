@@ -163,7 +163,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**：Phase 0 已完成並在真實 Postgres 驗證通過，`upgrade/phase0` 已推上 GitHub（commit `b4ba045`）。準備 merge 進 `main`，確認 deployment 後開始 Phase 1。
+5. **目前狀態**：Phase 0 已完成、merge 進 `main`（commit `be69510`）、**Vercel 部署成功確認**（`DATABASE_URL` 已設定，正式環境使用 Postgres 持久化）。準備從 `main` 開 `upgrade/phase1`，開始 Persona 系統。
 
 ---
 
