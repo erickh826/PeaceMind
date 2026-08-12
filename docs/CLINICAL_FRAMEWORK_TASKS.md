@@ -169,7 +169,30 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**：Phase 0 已完成、merge 進 `main`（commit `be69510`）、**Vercel 部署成功確認**（`DATABASE_URL` 已設定，正式環境使用 Postgres 持久化）。Phase 1（Persona 系統）已在 `upgrade/phase1` branch 完成並通過本地測試，等待 merge 進 `main` 前的真實 Postgres 手動指派流程實測。
+5. **目前狀態**：Phase 0 已完成、merge 進 `main`、**Vercel 部署成功確認**，且已經歷一輪資料庫連線層的 hotfix（詳見下方記錄），目前正式環境穩定運作於 Supabase + psycopg + Transaction Pooler。Phase 1（Persona 系統）已在 `upgrade/phase1` branch 完成程式碼與本地測試，接下來要把這輪 hotfix 帶進該 branch，繼續驗證 persona 指派流程。
+
+### ⚠️ 上線後的 Hotfix 記錄（Phase 0 資料庫連線層，2026-08-12）
+
+Phase 0 merge 進 `main` 並確認部署成功後，切換 Vercel `DATABASE_URL` 為雲端 Postgres（Supabase）時，接連遇到幾個獨立問題，記錄下來避免以後重踩：
+
+| # | 問題 | 根因 | 解法 |
+|---|------|------|------|
+| 1 | 本機 Docker 的 `DATABASE_URL` 誤設到 Vercel | Vercel 伺服器連不到 `localhost`（那是使用者自己電腦） | 換成雲端 Postgres（Supabase） |
+| 2 | Supabase 直連（`db.xxx.supabase.co:5432`）只回傳 IPv6，本機網路不支援 | Supabase 近期直連位址變成 IPv6-only | 改用 Supabase Pooler（IPv4） |
+| 3 | `?pgbouncer=true` 參數 + prepared statement 快取，導致 Transaction Pooler（6543）連線失敗 | Prisma 風格參數 driver 不認得；transaction-mode pooler 不支援 server-side prepared statement 快取 | 程式碼過濾掉該參數 + 關閉 prepared statement 快取 |
+| 4 | `OSError: Device or resource busy`（Vercel 上，SSL 連線建立階段） | `asyncpg` + `uvloop` 在 AWS Lambda 類沙盒環境的已知相容性問題 | **換 driver：`asyncpg` → `psycopg`（v3）** |
+| 5 | `failed to resolve host 'xxx@aws-0-...'` | 資料庫密碼含特殊字元（如 `@`），未做 URL encoding，破壞連線字串解析 | 密碼做 URL encode，或重設成純英數字密碼 |
+| 6 | Serverless process 「暖機」重用導致連線池 socket 狀態壞掉 | 模組層級全域連線池跨 invocation 重用 | 改用 `NullPool`，每次全新連線 |
+
+**最終確認可用的正式環境設定**：
+- Driver：`postgresql+psycopg://`（不是 `+asyncpg`）
+- 連線對象：Supabase **Transaction Pooler**（port 6543）
+- 密碼：URL encoded
+- `app/db/__init__.py`：`poolclass=NullPool` + `connect_args={"prepare_threshold": None}` + 過濾 `pgbouncer` 查詢參數
+
+**本機執行 migration 用 Supabase Session Pooler（port 5432）**，跟正式環境的 Transaction Pooler（6543）分開，見 `.env.example` 說明。
+
+✅ **2026-08-12 確認：Vercel 部署成功，`/api/v1/chat` POST 請求正常運作，讀寫 Supabase 無誤。**
 
 ---
 
