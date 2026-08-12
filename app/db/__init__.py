@@ -73,9 +73,9 @@ def get_engine() -> AsyncEngine:
         _engine = create_async_engine(
             _normalize_database_url(database_url),
             # NullPool：不在 process 內重用連線，見檔案頂端「Serverless 連線池相容性」說明
-            poolclass=NullPool,
+            poolclass=NullPool
             # PgBouncer transaction-mode pooler 相容性，見檔案頂端說明
-            connect_args={"statement_cache_size": 0},
+            
         )
     return _engine
 
