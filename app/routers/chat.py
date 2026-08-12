@@ -26,6 +26,7 @@ from app.gateways.multiturn_gateway import evaluate_multiturn_risk, RiskAction
 from app.gateways.output_gateway import check_output, OutputStatus
 from app.core.llm_client import chat_with_llm
 from app.core.crisis_handler import get_crisis_response
+from app.core.persona_resolver import resolve_persona, record_persona_usage
 from app.storage import conversation_store
 
 logger = logging.getLogger(__name__)
@@ -138,12 +139,21 @@ async def chat(request: ChatRequest):
             mt_result.cumulative_score,
         )
 
+    # ── Persona Resolver（Phase 1）─────────────────────────────────────────
+    # Phase 1 目前只解析「治療師手動指派」或「系統預設 persona」；
+    # Phase 2 引入真實 Profile/主題資料後才會補上自動匹配邏輯。
+    persona = await resolve_persona(user_client_key=session_id)
+    if session_id:
+        await record_persona_usage(session_id, persona)
+
     # ── Layer 2: LLM Core（Azure OpenAI + Sandwich Prompt）──────────────────
     try:
         llm_reply = chat_with_llm(
             user_message,
             conversation_history=history,
             security_hint=security_hint,
+            persona_name=persona.name,
+            persona_fragment=persona.system_prompt_fragment,
         )
     except Exception as e:
         logger.error("LLM call failed: %s", str(e))
@@ -166,8 +176,8 @@ async def chat(request: ChatRequest):
 
     # ── Memory 寫入 ──────────────────────────────────────────────────────────
     if session_id:
-        await conversation_store.append(session_id, "user", user_message)
-        await conversation_store.append(session_id, "assistant", final_reply)
+        await conversation_store.append(session_id, "user", user_message, persona_id=persona.id)
+        await conversation_store.append(session_id, "assistant", final_reply, persona_id=persona.id)
 
     intercepted = output_result.status == OutputStatus.INTERCEPTED
     return ChatResponse(reply=final_reply, intercepted=intercepted, session_id=session_id)

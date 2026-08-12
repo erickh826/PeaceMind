@@ -44,8 +44,10 @@ class ConversationSession(Base):
     )
     # 前端傳入的 session_id（任意字串，如 crypto.randomUUID() 或測試用固定字串）
     client_key: Mapped[str] = mapped_column(Text, nullable=False)
-    # persona_id 之後 Phase 1 會加 ForeignKey("personas.id")；此階段先留可為 NULL 的欄位
-    persona_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # persona_id：Phase 1 起有 FK 指向 personas.id
+    persona_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("personas.id"), nullable=True
+    )
     started_at: Mapped[datetime] = mapped_column(server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
@@ -69,8 +71,10 @@ class Message(Base):
     )
     role: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    # persona_id / rule_id 之後 Phase 1 / Phase 4 補上 ForeignKey
-    persona_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # persona_id：Phase 1 起有 FK 指向 personas.id；rule_id 待 Phase 4 補上
+    persona_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("personas.id"), nullable=True
+    )
     rule_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 

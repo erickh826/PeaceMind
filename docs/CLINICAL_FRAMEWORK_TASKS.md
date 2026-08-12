@@ -40,18 +40,24 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 ---
 
-## Phase 1 — Persona 系統（T-Q11–T-Q15 基礎）
+## Phase 1 — Persona 系統（T-Q11–T-Q15 基礎）✅ 完成（2026-08-12）
 > 目標：`system_prompt.py` 從寫死字串改為讀 `personas` 表；先只做「單一 default persona」跑通，暫不做自動匹配。
 
-- [ ] 1.1 Migration：`personas`, `persona_match_conditions`, `persona_assignments`, `persona_switch_log`
-- [ ] 1.2 把現有「阿本」人格寫入一筆 `personas`（status=active, 作為 default）
-- [ ] 1.3 `build_prompt()` 簽章改為吃 `persona: Persona` 參數，`TOP_LAYER` 改為 `persona.system_prompt_fragment`；`BOTTOM_LAYER` 安全重申維持寫死，不受 persona 影響
-- [ ] 1.4 `chat.py` 加入 Persona Resolver（此階段先固定回傳 default persona）
-- [ ] 1.5 Persona 自動匹配邏輯：讀 `user_profiles` + `profile_topics`（此時這兩表還沒建，先 stub／延到 Phase 2 補上真實資料後再接）
-- [ ] 1.6 治療師手動指派 API：`POST /api/v1/admin/personas/{id}/assign`
-- [ ] 1.7 Persona 切換記錄寫入 `persona_switch_log`
+- [x] 1.1 Migration：`personas`, `persona_match_conditions`, `persona_assignments`, `persona_switch_log`（`migrations/versions/102d7d73bbd7_*.py`），並補上 Phase 0 留空的 `sessions.persona_id` / `messages.persona_id` FK
+- [x] 1.2 把現有「Boon」人格寫入一筆 `personas`（status=active, is_default=true，固定 UUID `00000000-0000-0000-0000-000000000001`）
+- [x] 1.3 `build_prompt()` 改為吃 `persona_name` + `persona_fragment` 參數；`SAFETY_CORE`（絕對禁止事項 + 熱線）拆成獨立常數，永遠固定、不受 persona 影響
+- [x] 1.4 `chat.py` 加入 Persona Resolver 呼叫（`resolve_persona()`）
+- [ ] 1.5 Persona 自動匹配邏輯 —— **延到 Phase 2**（需要 `user_profiles` / `profile_topics`，Phase 1 還沒有這些表）
+- [x] 1.6 治療師手動指派 API：`POST /api/v1/admin/personas/assign`（+ `GET/POST /personas`, `PATCH /personas/{id}/activate`）
+- [x] 1.7 Persona 切換記錄寫入 `persona_switch_log`（`record_persona_usage()`，比對 session 目前 persona 與新解析結果）
 
-**完成判準**：可以在資料庫新增第二個 persona，指派給某個 user，該 user 下次對話行為改變；預設使用者不受影響。
+**完成判準**：可以在資料庫新增第二個 persona，指派給某個 user，該 user 下次對話行為改變；預設使用者不受影響。 ✅ 邏輯已實作並通過現有測試（169 passed，含 red-team 洩露偵測），**尚未在真實 Postgres 上實測手動指派流程**——下一步需要你在部署環境跑一次：建立第二個 persona → activate → assign 給某個 session_id → 確認下一次對話真的換了語氣。
+
+**實作筆記（與原設計的差異）**：
+- `ConversationStore.append()` 新增可選的 `persona_id` 參數，讓 `messages` 表能記錄每則訊息當時用的 persona（原設計 `messages.persona_id` 早就有欄位，但 Phase 0 沒有寫入邏輯，這次補上）。`InMemoryConversationStore` 收到這個參數會靜默忽略（沒有結構化欄位可放）。
+- 手動指派（T-Q15）目前透過 `users.external_ref` 對應 `session_id` 查找使用者，這是沿用 Phase 0 的暫時身份綁定方式（一個 session_id = 一個匿名 user）。**這只在該 session_id 已經至少對話過一次、User 記錄已建立後才查得到** —— Phase 2 導入真實 Profile/帳號系統後，這裡的身份識別邏輯需要重新設計。
+- Admin API（`admin_personas.py`）**目前沒有真正的治療師登入驗證**——`created_by` / `assigned_by` 只是 request body 裡的欄位，呼叫端自己填，不會驗證權限。這是刻意的暫時妥協（治療師登入機制排在 Phase 8 跟 Admin Console 前端一起做），上線前這些端點必須加上真實 auth，目前僅供後端邏輯驗證/測試用。
+- Persona 切換記錄（1.7）只有在 session 已存在（至少 append 過一次）時才會寫入；全新 session 的第一則訊息不算「切換」。
 
 ---
 
@@ -163,7 +169,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**：Phase 0 已完成、merge 進 `main`（commit `be69510`）、**Vercel 部署成功確認**（`DATABASE_URL` 已設定，正式環境使用 Postgres 持久化）。準備從 `main` 開 `upgrade/phase1`，開始 Persona 系統。
+5. **目前狀態**：Phase 0 已完成、merge 進 `main`（commit `be69510`）、**Vercel 部署成功確認**（`DATABASE_URL` 已設定，正式環境使用 Postgres 持久化）。Phase 1（Persona 系統）已在 `upgrade/phase1` branch 完成並通過本地測試，等待 merge 進 `main` 前的真實 Postgres 手動指派流程實測。
 
 ---
 

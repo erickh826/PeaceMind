@@ -22,7 +22,11 @@ class InMemoryConversationStore(ConversationStore):
             history = self._sessions.get(session_id, [])
             return [msg.copy() for msg in history]
 
-    async def append(self, session_id: str, role: str, content: str) -> None:
+    async def append(
+        self, session_id: str, role: str, content: str, persona_id: str | None = None
+    ) -> None:
+        # persona_id 目前只有 PostgresConversationStore 會儲存（見 T-Q14），
+        # InMemoryConversationStore 沒有結構化欄位可放，靜默忽略即可。
         if role not in ("user", "assistant"):
             return
 
