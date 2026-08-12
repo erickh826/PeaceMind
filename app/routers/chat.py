@@ -87,7 +87,7 @@ async def chat(request: ChatRequest):
     # ── Memory：決定 history 來源 ──────────────────────────────────────────────
     if session_id:
         # Server-side memory 模式：從 store 讀取，忽略前端傳入的 history
-        history = conversation_store.get_history(session_id)
+        history = await conversation_store.get_history(session_id)
     else:
         # Stateless 模式：使用前端傳入的 history（兼容舊版前端）
         history = [msg.model_dump() for msg in request.history]
@@ -104,8 +104,8 @@ async def chat(request: ChatRequest):
         crisis_reply = get_crisis_response(user_message)
         # 危機訊息也記入 memory
         if session_id:
-            conversation_store.append(session_id, "user", user_message)
-            conversation_store.append(session_id, "assistant", crisis_reply)
+            await conversation_store.append(session_id, "user", user_message)
+            await conversation_store.append(session_id, "assistant", crisis_reply)
         return ChatResponse(reply=crisis_reply, crisis=True, session_id=session_id)
 
     # ── Layer 1b: Semantic Gateway（Prompt Shields）──────────────────────────
@@ -166,8 +166,8 @@ async def chat(request: ChatRequest):
 
     # ── Memory 寫入 ──────────────────────────────────────────────────────────
     if session_id:
-        conversation_store.append(session_id, "user", user_message)
-        conversation_store.append(session_id, "assistant", final_reply)
+        await conversation_store.append(session_id, "user", user_message)
+        await conversation_store.append(session_id, "assistant", final_reply)
 
     intercepted = output_result.status == OutputStatus.INTERCEPTED
     return ChatResponse(reply=final_reply, intercepted=intercepted, session_id=session_id)
@@ -175,5 +175,5 @@ async def chat(request: ChatRequest):
 
 @router.post("/reset", response_model=ResetResponse)
 async def reset(request: ResetRequest):
-    conversation_store.reset(request.session_id.strip())
+    await conversation_store.reset(request.session_id.strip())
     return ResetResponse(status="cleared")

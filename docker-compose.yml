@@ -1,0 +1,35 @@
+# 本地開發用 Postgres — 對應 docs/CLINICAL_FRAMEWORK_ARCHITECTURE.md Phase 0
+#
+# 使用方式：
+#   docker compose up -d          # 啟動
+#   docker compose down           # 關閉（保留資料）
+#   docker compose down -v        # 關閉並清空資料
+#
+# 啟動後在 .env 設定：
+#   DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/peacemind
+#
+# 跑 migration：
+#   alembic upgrade head
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: peacemind-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: peacemind
+    ports:
+      # 用 5433 對外，避免和機器上其他常見的本地 Postgres（預設 5432）衝突
+      - "5433:5432"
+    volumes:
+      - peacemind_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d peacemind"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  peacemind_pgdata:

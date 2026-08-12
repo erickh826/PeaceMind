@@ -69,6 +69,30 @@ cp .env.example .env
 | `AZURE_OPENAI_DEPLOYMENT_NAME` | 你的 Deployment 名稱，如 `gpt-4o` |
 | `AZURE_OPENAI_API_VERSION` | 預設 `2024-02-01` |
 
+### 2.5 啟動本地 Postgres（Phase 0 — 持久化 Session 記憶）
+
+```bash
+docker compose up -d
+```
+
+會在本機 `5433` port 起一個 `postgres:16`（避開常見的 5432 佔用）。啟動後在 `.env` 加上：
+
+```
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/peacemind
+```
+
+接著跑 migration：
+
+```bash
+alembic upgrade head
+```
+
+會建立 `users` / `sessions` / `messages` 三張表（+ `alembic_version`）。
+
+> 沒有設定 `DATABASE_URL` 時，系統會自動退回 `InMemoryConversationStore`（純記憶體、重啟即消失），適合快速本地開發或跑測試，不強制要求先起資料庫。
+>
+> 生產環境（Vercel 部署）建議用 Supabase / Neon / Vercel Postgres 等雲端服務，把它們給的連線字串填進 `DATABASE_URL` 即可，架構上不需要改任何程式碼。
+
 ### 3. 啟動 API
 
 ```bash

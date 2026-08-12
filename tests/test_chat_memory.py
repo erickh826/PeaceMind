@@ -1,7 +1,18 @@
+import asyncio
+
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.storage import conversation_store
+
+
+def reset_store(session_id: str) -> None:
+    """
+    測試輔助函式：conversation_store.reset() 在 Phase 0 改為 async
+    （為了讓 PostgresConversationStore 可用 async SQLAlchemy），
+    這裡包一層讓測試的 setup/teardown 可以同步呼叫。
+    """
+    asyncio.run(conversation_store.reset(session_id))
 
 
 def test_chat_uses_server_side_memory_and_ignores_client_history(monkeypatch):
@@ -14,7 +25,7 @@ def test_chat_uses_server_side_memory_and_ignores_client_history(monkeypatch):
     monkeypatch.setattr("app.routers.chat.chat_with_llm", fake_chat_with_llm)
 
     session_id = "session-memory-test-1"
-    conversation_store.reset(session_id)
+    reset_store(session_id)
     client = TestClient(app)
 
     first = client.post(
@@ -41,7 +52,7 @@ def test_chat_uses_server_side_memory_and_ignores_client_history(monkeypatch):
     assert captured_histories[1][0]["role"] == "user"
     assert captured_histories[1][0]["content"] == "我今天很累。"
 
-    conversation_store.reset(session_id)
+    reset_store(session_id)
 
 
 def test_reset_endpoint_clears_session_memory(monkeypatch):
@@ -54,7 +65,7 @@ def test_reset_endpoint_clears_session_memory(monkeypatch):
     monkeypatch.setattr("app.routers.chat.chat_with_llm", fake_chat_with_llm)
 
     session_id = "session-memory-test-2"
-    conversation_store.reset(session_id)
+    reset_store(session_id)
     client = TestClient(app)
 
     first = client.post(
@@ -81,7 +92,7 @@ def test_reset_endpoint_clears_session_memory(monkeypatch):
     assert third.status_code == 200
     assert captured_histories[2] == []
 
-    conversation_store.reset(session_id)
+    reset_store(session_id)
 
 
 def test_sessions_are_isolated(monkeypatch):
@@ -95,8 +106,8 @@ def test_sessions_are_isolated(monkeypatch):
 
     session_a = "session-isolation-a"
     session_b = "session-isolation-b"
-    conversation_store.reset(session_a)
-    conversation_store.reset(session_b)
+    reset_store(session_a)
+    reset_store(session_b)
     client = TestClient(app)
 
     first = client.post(
@@ -114,5 +125,5 @@ def test_sessions_are_isolated(monkeypatch):
     assert captured_histories[0] == []
     assert captured_histories[1] == []
 
-    conversation_store.reset(session_a)
-    conversation_store.reset(session_b)
+    reset_store(session_a)
+    reset_store(session_b)
