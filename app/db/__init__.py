@@ -22,6 +22,18 @@ asyncpg 的 statement cache（`statement_cache_size=0`），對一般直連 Post
 另外，Supabase 給的 transaction pooler 連線字串常帶有 `?pgbouncer=true`
 查詢參數（給 Prisma 等工具識別用）。asyncpg 不認得這個參數，若原封不動
 放在 DATABASE_URL 裡會導致連線失敗，這裡在建立 engine 前先過濾掉。
+
+── Serverless 連線池相容性（Hotfix, 2026-08）─────────────────────────────────
+`_engine` 是模組層級的全域單例，正常情況下這是好的（同一個 process 內重複
+使用同一組連線池）。但 Vercel 的 Python function 有時會重用「暖機」的
+process，process 被凍結又解凍時，連線池裡持有的 socket 可能處在壞掉的
+狀態，導致 `OSError: [Errno 16] Device or resource busy` 這類錯誤。
+
+解法：serverless 環境不應該自己維護連線池（反正 PgBouncer/Transaction
+Pooler 本身就已經在做連線池了），改用 `NullPool`：每次 checkout 都建立
+全新連線、用完即關閉，不跨 request 重用底層 socket。這犧牲一點點延遲
+（每次都要重新建立連線），換取在 serverless 環境下的穩定性，是
+asyncpg + Lambda/Vercel 類環境的標準做法。
 """
 from __future__ import annotations
 
@@ -31,6 +43,7 @@ from typing import AsyncIterator
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.db.base import Base
 
@@ -59,7 +72,8 @@ def get_engine() -> AsyncEngine:
             )
         _engine = create_async_engine(
             _normalize_database_url(database_url),
-            pool_pre_ping=True,
+            # NullPool：不在 process 內重用連線，見檔案頂端「Serverless 連線池相容性」說明
+            poolclass=NullPool,
             # PgBouncer transaction-mode pooler 相容性，見檔案頂端說明
             connect_args={"statement_cache_size": 0},
         )
