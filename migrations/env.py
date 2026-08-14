@@ -99,6 +99,11 @@ async def run_async_migrations() -> None:
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
 
+    # Windows 預設 ProactorEventLoop 與 psycopg async 不相容，
+    # 需改用 SelectorEventLoop。
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     asyncio.run(run_async_migrations())
 
 
