@@ -22,6 +22,8 @@ load_dotenv()
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+from httpx import ASGITransport, AsyncClient
+
 from app.db import get_session
 from app.db.models import ConversationSession, Message, User
 from app.db.models_persona import (
@@ -31,6 +33,7 @@ from app.db.models_persona import (
     Therapist,
 )
 from app.core.persona_resolver import ResolvedPersona, resolve_persona, record_persona_usage
+from app.main import app
 from app.storage.postgres_store import PostgresConversationStore
 from sqlalchemy import select, text
 
@@ -117,21 +120,32 @@ async def main():
     assert persona.id == "00000000-0000-0000-0000-000000000001"
     print("  [PASS] Default Boon persona resolved")
 
-    # ── Step 5: Assign Winnie to this user ──────────────────────────────────
+    # ── Step 5: Assign Winnie to this user via real HTTP endpoint ───────────
     print("\n" + "=" * 60)
-    print("Step 5: Assign Winnie to this user")
+    print("Step 5: POST /api/v1/admin/personas/assign (real HTTP call, not direct ORM)")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/admin/personas/assign",
+            json={
+                "session_id": test_session_id,
+                "persona_id": winnie_id,
+                "assigned_by": str(therapist_id),
+                "note": "Phase 1 E2E test",
+            },
+        )
+    print(f"  HTTP {response.status_code}: {response.json()}")
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+    body = response.json()
+    assert body["status"] == "assigned"
+    assert body["persona_id"] == winnie_id
     async with get_session() as db:
         user = await db.scalar(select(User).where(User.external_ref == test_session_id))
-        assignment = PersonaAssignment(
-            user_id=user.id,
-            persona_id=uuid.UUID(winnie_id),
-            assigned_by=therapist_id,
-            note="Phase 1 E2E test",
-        )
-        db.add(assignment)
-        await db.commit()
-        print(f"  Assignment created: user_id={user.id} → persona_id={winnie_id}")
-        print("  [PASS] Persona assigned")
+        assignment = await db.get(PersonaAssignment, user.id)
+        assert assignment is not None, "PersonaAssignment row should exist after API call"
+        assert assignment.persona_id == uuid.UUID(winnie_id)
+        print(f"  Assignment persisted: user_id={user.id} → persona_id={winnie_id}")
+        print("  [PASS] Persona assigned via real API endpoint")
 
     # ── Step 6: Resolve persona again → should get Winnie ───────────────────
     print("\n" + "=" * 60)
