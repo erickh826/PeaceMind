@@ -1,6 +1,6 @@
 """
 三明治結構 (Sandwich Prompting) System Prompt
-頂層 → [語言限制 + persona 人格描述] + [絕對禁止事項 + 危機熱線]（SAFETY_CORE，固定不受 persona 影響）
+頂層 → [語言限制 + persona 人格描述 + Phase 2 context] + [絕對禁止事項 + 危機熱線]（SAFETY_CORE，固定不受 persona 影響）
 中層 → <user_input> 標籤包裝用戶輸入
 底層 → 重申安全護欄（帶入 persona 名稱）
 
@@ -8,6 +8,11 @@ Phase 1 change：TOP_LAYER 拆成兩塊 ——
   1. LANGUAGE_CONSTRAINT + persona.system_prompt_fragment（人格描述，可替換）
   2. SAFETY_CORE（絕對禁止事項 + 香港緊急求助熱線，永遠固定，不受任何 persona 覆寫）
 這樣換 persona 只換「語氣/身份/核心原則」，護欄本身不會被稀釋。
+
+Phase 2 change：persona 人格描述之後、SAFETY_CORE 之前，可選擇性插入
+Context Assembly Service（app/core/context_assembler.py）組好的 profile_text /
+past_summaries_text 區塊。一樣放在 SAFETY_CORE 之前，確保護欄永遠是最後、最不
+容易被稀釋的一段。
 """
 
 LANGUAGE_CONSTRAINT = """[LANGUAGE CONSTRAINT]
@@ -77,18 +82,26 @@ def build_prompt(
     persona_name: str = "Boon",
     persona_fragment: str = DEFAULT_PERSONA_FRAGMENT,
     security_hint: str | None = None,
+    profile_text: str | None = None,
+    past_summaries_text: str | None = None,
 ) -> str:
     """
     組裝三明治結構 Prompt
-    [語言限制 + persona 人格描述] + SAFETY_CORE + [選配安全提示] + <user_input> 包裝 + 底層安全重申
+    [語言限制 + persona 人格描述 + Phase 2 context] + SAFETY_CORE + [選配安全提示]
+    + <user_input> 包裝 + 底層安全重申
 
     Args:
         user_message: 使用者輸入
         persona_name: 目前使用的 persona 名稱，用於底層安全重申（Phase 1 起可替換，預設 "Boon"）
         persona_fragment: 目前使用的 persona 人格描述片段（Phase 1 起可替換，預設沿用原本寫死內容）
         security_hint: 傳入 "HIGH_RISK" 時在系統提示中注入警示層（Phase 5b WARN 用）
+        profile_text: Phase 2 Context Assembly Service 組好的學生 Profile 文字區塊（可為 None）
+        past_summaries_text: Phase 2 Context Assembly Service 組好的跨 session 摘要文字區塊（可為 None）
     """
-    top_layer = f"{LANGUAGE_CONSTRAINT}\n\n{persona_fragment}{SAFETY_CORE}"
+    context_blocks = [b for b in (profile_text, past_summaries_text) if b]
+    context_str = "\n\n" + "\n\n".join(context_blocks) if context_blocks else ""
+
+    top_layer = f"{LANGUAGE_CONSTRAINT}\n\n{persona_fragment}{context_str}{SAFETY_CORE}"
     hint_layer = HIGH_RISK_HINT if security_hint == "HIGH_RISK" else ""
     bottom_layer = _bottom_layer(persona_name)
     return f"{top_layer}{hint_layer}\n<user_input>\n{user_message}\n</user_input>{bottom_layer}"
