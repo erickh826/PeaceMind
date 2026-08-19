@@ -79,7 +79,9 @@ class PostgresConversationStore(ConversationStore):
             messages = list(reversed(msg_result.scalars().all()))
             return [{"role": m.role, "content": m.content} for m in messages]
 
-    async def append(self, session_id: str, role: str, content: str) -> None:
+    async def append(
+        self, session_id: str, role: str, content: str, persona_id: str | None = None
+    ) -> None:
         if role not in ("user", "assistant"):
             return
 
@@ -89,7 +91,14 @@ class PostgresConversationStore(ConversationStore):
 
         async with get_session() as db:
             session_row = await self._get_or_create_session(db, session_id)
-            db.add(Message(session_id=session_row.id, role=role, content=text))
+            db.add(
+                Message(
+                    session_id=session_row.id,
+                    role=role,
+                    content=text,
+                    persona_id=uuid.UUID(persona_id) if persona_id else None,
+                )
+            )
             await db.commit()
 
     async def reset(self, session_id: str) -> None:

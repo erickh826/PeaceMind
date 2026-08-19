@@ -20,6 +20,7 @@ load_dotenv()
 # Phase 1 之後新增 model 檔案（如 app/db/models_persona.py）記得也在這裡 import
 from app.db.base import Base  # noqa: E402
 from app.db import models  # noqa: E402,F401
+from app.db import models_persona  # noqa: E402,F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -97,6 +98,11 @@ async def run_async_migrations() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+
+    # Windows 預設 ProactorEventLoop 與 psycopg async 不相容，
+    # 需改用 SelectorEventLoop。
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     asyncio.run(run_async_migrations())
 

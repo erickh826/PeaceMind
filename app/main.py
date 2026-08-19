@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import chat
+from app.routers import chat, admin_personas
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,6 +44,7 @@ app.add_middleware(
 )
 
 app.include_router(chat.router, prefix="/api/v1", tags=["Chat"])
+app.include_router(admin_personas.router, prefix="/api/v1/admin", tags=["Admin — Personas"])
 
 
 @app.get("/", tags=["Health"])

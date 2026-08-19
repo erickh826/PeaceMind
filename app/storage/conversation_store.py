@@ -13,7 +13,9 @@ class ConversationStore(Protocol):
     async def get_history(self, session_id: str) -> list[dict[str, str]]:
         ...
 
-    async def append(self, session_id: str, role: str, content: str) -> None:
+    async def append(
+        self, session_id: str, role: str, content: str, persona_id: str | None = None
+    ) -> None:
         ...
 
     async def reset(self, session_id: str) -> None:
