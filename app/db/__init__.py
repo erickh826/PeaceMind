@@ -41,7 +41,9 @@ Pooler 本身就已經在做連線池了，應用層不需要自己再維護一�
 """
 from __future__ import annotations
 
+import asyncio
 import os
+import sys
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -50,6 +52,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool
 
 from app.db.base import Base
+
+# Windows 預設 ProactorEventLoop 與 psycopg async 不相容（同 migrations/env.py
+# 的修正）。這裡是所有 async DB 存取的共用入口，本機用 uvicorn 跑 API 一樣會
+# 經過這個模組，所以修復要放在這裡，不能只放在 migrations/env.py。
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
