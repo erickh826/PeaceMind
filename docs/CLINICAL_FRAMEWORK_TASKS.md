@@ -61,20 +61,29 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 ---
 
-## Phase 2 — Profile / 主題演化 / 跨 Session 摘要（Q1–Q6）
+## Phase 2 — Profile / 主題演化 / 跨 Session 摘要（Q1–Q6）✅ 程式碼完成（2026-08-19）
 > 目標：Context Assembly Service 正式成形，Persona 自動匹配補完。
+> 設計依據：`docs/Phase2_implement_plan_Antigravity.md`（實作前已修正兩個問題，見該文件 §2）。
 
-- [ ] 2.1 Migration：`user_profiles`, `profile_change_log`, `profile_topics`, `session_summaries`
-- [ ] 2.2 `Context Assembly Service`：對話開始時載入 profile + 相關摘要，組進 system prompt
-- [ ] 2.3 Profile 動態更新偵測：LLM 判斷使用者是否在更正先前資訊 → 寫 `profile_change_log` + 更新 `user_profiles`（Q2/Q15）
-- [ ] 2.4 主題標籤自動演化：關鍵字/語意分類 → `profile_topics` 計數，達門檻新增主題（Q3）
-- [ ] 2.5 Session 結束背景任務：用 LLM 生成結構化摘要寫入 `session_summaries`（Q4/Q5）
-- [ ] 2.6 跨 Session 記憶檢索：使用者提及「上次」時，撈取最相關 `session_summaries` 注入 context（Q4）
-- [ ] 2.7 刪除/遺忘 API：`POST /api/v1/profile/forget`，軟刪除 `session_summaries`（Q6，PDPO）
-- [ ] 2.8 補完 Phase 1.5 的 Persona 自動匹配（現在有真實 profile/topics 可用）
-- [ ] 2.9 推薦策略依最新 Profile 動態調整（Q17）— 接到現有的 `REC_RULES`（前端）或搬到後端統一決策
+- [x] 2.1 Migration：`user_profiles`, `profile_change_log`, `profile_topics`, `session_summaries`（`migrations/versions/1ade07baedf2_*.py`）
+- [x] 2.2 `Context Assembly Service`（`app/core/context_assembler.py`）：對話開始時載入 profile + 相關摘要，組進 system prompt
+- [x] 2.3 Profile 動態更新偵測：LLM 判斷使用者是否在更正先前資訊 → 寫 `profile_change_log` + 更新 `user_profiles`（Q2/Q15）
+- [x] 2.4 主題標籤自動演化：LLM 語意分類（`app/core/clinical_topics.py` 共用標準主題清單）→ `profile_topics` 計數，達門檻（>=3）新增主題（Q3）
+- [x] 2.5 Session 結束時生成摘要：`app/core/session_summarizer.py`，用 LLM 生成結構化摘要寫入 `session_summaries`（Q4/Q5）——**同步執行，不是背景任務**，見下方實作筆記
+- [x] 2.6 跨 Session 記憶檢索：使用者提及「上次」時，撈取最相關 `session_summaries` 注入 context（Q4）
+- [x] 2.7 刪除/遺忘 API：`POST /api/v1/profile/forget`，軟刪除 `session_summaries` + 清空 `user_profiles`/`profile_topics`（Q6，PDPO）
+- [x] 2.8 補完 Phase 1.5 的 Persona 自動匹配（`persona_match_conditions`，`app/core/persona_resolver.py`）
+- [ ] 2.9 推薦策略依最新 Profile 動態調整（Q17）— **未實作**，Antigravity 原始計畫文件對這項只有目標敘述、沒有設計細節，實作時判斷屬於獨立範圍，先跳過，之後需要另外設計（前端 `REC_RULES` 怎麼接後端 profile）
 
-**完成判準**：模擬「上次講嗰個朋友」的對話，system 能撈到正確摘要並回應連貫。
+**完成判準**：模擬「上次講嗰個朋友」的對話，system 能撈到正確摘要並回應連貫。 ✅ 邏輯已實作並通過 `tests/test_phase2_profiles.py`（本機 Docker Postgres 驗證，5 項全過），**尚未在 Supabase 正式環境跑過 migration / E2E 驗證**，也還沒 merge 回 `main`。
+
+**實作筆記（與 Antigravity 原始計畫的差異，落地前已修正）**：
+- **`session_summaries.session_id` 改成 `ON DELETE SET NULL`**（原設計是 `CASCADE`）。原設計會讓 `/api/v1/reset` 在寫入摘要後緊接著把 `sessions` 那筆刪掉，`CASCADE` 會讓剛寫入的摘要在同一輪請求裡被連坐刪除——Q4–Q6 的跨 session 記憶會永遠留不住任何東西。這個修正已同步進 `docs/CLINICAL_FRAMEWORK_ARCHITECTURE.md` 的 DDL，兩份文件目前一致。
+- **Profile 抽取 + 主題分類不用 `BackgroundTasks`，改成同步、合併成一次 LLM 呼叫**。原設計提議用 FastAPI `BackgroundTasks` 在回應送出後才跑，理由是「延遲優化」；但這個專案部署在 Vercel（`api/index.py` 是純 ASGI passthrough，沒有 `waitUntil` 機制），回應送出後執行環境幾乎立刻會被凍結回收——`BackgroundTasks` 排程的工作不保證真的執行完，本機 `uvicorn` 測試會看起來正常，Vercel 上可能悄悄失效。改成 `process_post_chat_updates()` 在 `/chat` 回應送出前直接 `await`，profile 抽取跟主題分類合併成一次 LLM 呼叫（不是原設計的兩次），把多加的延遲代價降到最低。**接受的取捨**：每輪 `/chat` 多一次 LLM 呼叫的延遲。
+- **`/api/v1/reset` 和 `POST /api/v1/chat/end` 共用同一個冪等函式** `end_session_and_summarize()`，用 `sessions.ended_at` 當旗標——已經結束過的 session 直接 no-op，避免同一個 session 被呼叫兩次而生成兩筆 `session_summaries`（多花一次 LLM 成本）。
+- **`app/core/context_assembler.py` 不會預先建立空的 `UserProfile` 記錄**（原設計會）。首次對話時交給 `profile_service.py` 在對話結束後依實際抽取結果建立，避免每個新使用者的第一句話就多一次寫入。
+- **已知取捨、未在本階段修正**：`assemble_context()` 對 `users` 表做了一次獨立查詢，跟 `resolve_persona()` 各自查一次，沒有共用同一次查詢結果——正確性無虞，只是多一次 DB round trip。
+- **測試踩過的坑**：`tests/test_phase2_profiles.py` 一開始沿用了 `test_phase1_e2e.py` 的 `load_dotenv()` 寫法，結果讓 `.env` 裡的 Supabase `DATABASE_URL` 悄悄帶進沒有明確設定 DB 的預設 `pytest tests/` 執行，導致測試一度真的打到 Supabase 正式環境（已確認沒有留下殘留資料，但拿掉了 `load_dotenv()`，改成完全依賴呼叫端自己 `export DATABASE_URL`，跟其他測試檔案的慣例一致）。另外發現 Phase 2 的新程式碼讓既有的 `tests/test_chat_memory.py`（沒有 mock 新的 Phase 2 hook）在有設定 `DATABASE_URL` 時會意外打真的 Azure OpenAI、寫入真的 profile 資料——已修正該檔案補上對應的 mock。
 
 ---
 
