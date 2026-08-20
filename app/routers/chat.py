@@ -16,6 +16,7 @@ Memory：
 """
 
 import logging
+import os
 import uuid
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -27,6 +28,9 @@ from app.gateways.output_gateway import check_output, OutputStatus
 from app.core.llm_client import chat_with_llm
 from app.core.crisis_handler import get_crisis_response
 from app.core.persona_resolver import resolve_persona, record_persona_usage
+from app.core.context_assembler import assemble_context
+from app.core.profile_service import process_post_chat_updates
+from app.core.session_summarizer import end_session_and_summarize
 from app.storage import conversation_store
 
 logger = logging.getLogger(__name__)
@@ -139,12 +143,15 @@ async def chat(request: ChatRequest):
             mt_result.cumulative_score,
         )
 
-    # ── Persona Resolver（Phase 1）─────────────────────────────────────────
-    # Phase 1 目前只解析「治療師手動指派」或「系統預設 persona」；
-    # Phase 2 引入真實 Profile/主題資料後才會補上自動匹配邏輯。
+    # ── Persona Resolver（Phase 1 + Phase 2 自動匹配）──────────────────────
+    # 優先序：治療師手動指派 → persona_match_conditions 自動匹配 → 系統預設 persona
     persona = await resolve_persona(user_client_key=session_id)
     if session_id:
         await record_persona_usage(session_id, persona)
+
+    # ── Context Assembly（Phase 2）───────────────────────────────────────────
+    # 載入 Profile（含演化主題）與相關跨 session 摘要，組進 system prompt
+    context = await assemble_context(session_id, user_message)
 
     # ── Layer 2: LLM Core（Azure OpenAI + Sandwich Prompt）──────────────────
     try:
@@ -154,6 +161,8 @@ async def chat(request: ChatRequest):
             security_hint=security_hint,
             persona_name=persona.name,
             persona_fragment=persona.system_prompt_fragment,
+            profile_text=context.profile_text,
+            past_summaries_text=context.past_summaries_text,
         )
     except Exception as e:
         logger.error("LLM call failed: %s", str(e))
@@ -179,11 +188,80 @@ async def chat(request: ChatRequest):
         await conversation_store.append(session_id, "user", user_message, persona_id=persona.id)
         await conversation_store.append(session_id, "assistant", final_reply, persona_id=persona.id)
 
+        # ── Post-processing（Phase 2，同步執行，見 profile_service.py 檔頭說明）─
+        await process_post_chat_updates(session_id, user_message, final_reply)
+
     intercepted = output_result.status == OutputStatus.INTERCEPTED
     return ChatResponse(reply=final_reply, intercepted=intercepted, session_id=session_id)
 
 
+class ChatEndRequest(BaseModel):
+    session_id: str = Field(..., min_length=8, max_length=128)
+
+
+class ChatEndResponse(BaseModel):
+    status: str
+
+
+class ForgetRequest(BaseModel):
+    session_id: str = Field(..., min_length=8, max_length=128)
+
+
+class ForgetResponse(BaseModel):
+    status: str
+
+
 @router.post("/reset", response_model=ResetResponse)
 async def reset(request: ResetRequest):
-    await conversation_store.reset(request.session_id.strip())
+    session_id = request.session_id.strip()
+    # 先產生跨 session 摘要（Q4/Q5），再照原本行為刪除 messages/session ——
+    # end_session_and_summarize() 是冪等的（見該檔案說明），跟 /chat/end 一起呼叫也不會重複寫入。
+    await end_session_and_summarize(session_id)
+    await conversation_store.reset(session_id)
     return ResetResponse(status="cleared")
+
+
+@router.post("/chat/end", response_model=ChatEndResponse)
+async def end_chat(request: ChatEndRequest):
+    """明確結束一個 session（不像 /reset 會刪除訊息），觸發摘要生成（Q4/Q5）。"""
+    await end_session_and_summarize(request.session_id.strip())
+    return ChatEndResponse(status="ended")
+
+
+@router.post("/profile/forget", response_model=ForgetResponse)
+async def forget_profile(request: ForgetRequest):
+    """Q6（PDPO）：使用者要求遺忘——軟刪除跨 session 摘要、清空已知 profile 內容與主題計數。"""
+    if not os.environ.get("DATABASE_URL"):
+        raise HTTPException(status_code=503, detail="DATABASE_URL 未設定，Profile 功能需要資料庫。")
+
+    from sqlalchemy import select, text
+
+    from app.db import get_session
+    from app.db.models import User
+    from app.db.models_profile import UserProfile
+
+    session_id = request.session_id.strip()
+    async with get_session() as db:
+        user_row = await db.scalar(select(User).where(User.external_ref == session_id))
+        if user_row is None:
+            return ForgetResponse(status="nothing_to_forget")
+
+        await db.execute(
+            text(
+                "UPDATE session_summaries SET deleted_at = now() "
+                "WHERE user_id = :uid AND deleted_at IS NULL"
+            ),
+            {"uid": user_row.id},
+        )
+        await db.execute(text("DELETE FROM profile_topics WHERE user_id = :uid"), {"uid": user_row.id})
+
+        profile_row = await db.get(UserProfile, user_row.id)
+        if profile_row is not None:
+            profile_row.display_name = None
+            profile_row.year_of_study = None
+            profile_row.risk_level = "none"
+            profile_row.profile_json = {}
+
+        await db.commit()
+
+    return ForgetResponse(status="forgotten")

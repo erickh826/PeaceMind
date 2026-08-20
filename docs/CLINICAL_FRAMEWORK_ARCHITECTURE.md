@@ -138,7 +138,7 @@ CREATE TABLE messages (
 -- Q4/Q5/Q6: 跨 Session 結構化摘要（事件 + 情緒 + 策略），非純文字標籤
 CREATE TABLE session_summaries (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id      UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    session_id      UUID REFERENCES sessions(id) ON DELETE SET NULL,  -- 見下方註記：不可 CASCADE
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     summary_text    TEXT NOT NULL,
     key_events      JSONB NOT NULL DEFAULT '[]',     -- [{"event": "提到朋友背叛", "topic": "友誼"}]
@@ -148,6 +148,10 @@ CREATE TABLE session_summaries (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at      TIMESTAMPTZ                       -- Q6: 使用者可要求刪除/遺忘（軟刪除，符合 PDPO）
 );
+-- session_id 刻意不是 ON DELETE CASCADE：`/api/v1/reset`（前端「新對話」按鈕）會直接把
+-- sessions 那筆刪掉，如果這裡設 CASCADE，摘要會在寫入的同一輪對話結束時被自己連坐刪除，
+-- Q4–Q6 的跨 session 記憶就永遠留不住任何東西。改成 SET NULL：session 沒了，摘要留著，
+-- 只是不再連得回那個已刪除的 session（Phase 2 落地時發現，見 Phase2_implement_plan_Antigravity.md）。
 
 -- Q7/Q8/Q9: 資源目錄 + 觀看紀錄 + 回饋
 CREATE TABLE resources (

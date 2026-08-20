@@ -21,6 +21,7 @@ load_dotenv()
 from app.db.base import Base  # noqa: E402
 from app.db import models  # noqa: E402,F401
 from app.db import models_persona  # noqa: E402,F401
+from app.db import models_profile  # noqa: E402,F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -6,6 +6,10 @@ from app.main import app
 from app.storage import conversation_store
 
 
+async def _noop(*args, **kwargs) -> None:
+    return None
+
+
 def reset_store(session_id: str) -> None:
     """
     測試輔助函式：conversation_store.reset() 在 Phase 0 改為 async
@@ -23,6 +27,12 @@ def test_chat_uses_server_side_memory_and_ignores_client_history(monkeypatch):
         return "我明白你很辛苦，我在這裡陪你。"
 
     monkeypatch.setattr("app.routers.chat.chat_with_llm", fake_chat_with_llm)
+    # Phase 2 起，/chat 和 /reset 在 DATABASE_URL 有設定時會呼叫真的 LLM 做 profile/
+    # topic 抽取與 session 摘要。這幾支測試不是 Phase 2 相關測試，跟 Phase 2 的
+    # LLM 呼叫無關，這裡 no-op 掉，避免跑這個檔案（尤其是不小心帶著真的
+    # DATABASE_URL 執行時）意外打真的 Azure OpenAI、寫入非預期的 profile 資料。
+    monkeypatch.setattr("app.routers.chat.process_post_chat_updates", _noop)
+    monkeypatch.setattr("app.routers.chat.end_session_and_summarize", _noop)
 
     session_id = "session-memory-test-1"
     reset_store(session_id)
@@ -63,6 +73,12 @@ def test_reset_endpoint_clears_session_memory(monkeypatch):
         return "我會陪你慢慢整理。"
 
     monkeypatch.setattr("app.routers.chat.chat_with_llm", fake_chat_with_llm)
+    # Phase 2 起，/chat 和 /reset 在 DATABASE_URL 有設定時會呼叫真的 LLM 做 profile/
+    # topic 抽取與 session 摘要。這幾支測試不是 Phase 2 相關測試，跟 Phase 2 的
+    # LLM 呼叫無關，這裡 no-op 掉，避免跑這個檔案（尤其是不小心帶著真的
+    # DATABASE_URL 執行時）意外打真的 Azure OpenAI、寫入非預期的 profile 資料。
+    monkeypatch.setattr("app.routers.chat.process_post_chat_updates", _noop)
+    monkeypatch.setattr("app.routers.chat.end_session_and_summarize", _noop)
 
     session_id = "session-memory-test-2"
     reset_store(session_id)
@@ -103,6 +119,12 @@ def test_sessions_are_isolated(monkeypatch):
         return "我在。"
 
     monkeypatch.setattr("app.routers.chat.chat_with_llm", fake_chat_with_llm)
+    # Phase 2 起，/chat 和 /reset 在 DATABASE_URL 有設定時會呼叫真的 LLM 做 profile/
+    # topic 抽取與 session 摘要。這幾支測試不是 Phase 2 相關測試，跟 Phase 2 的
+    # LLM 呼叫無關，這裡 no-op 掉，避免跑這個檔案（尤其是不小心帶著真的
+    # DATABASE_URL 執行時）意外打真的 Azure OpenAI、寫入非預期的 profile 資料。
+    monkeypatch.setattr("app.routers.chat.process_post_chat_updates", _noop)
+    monkeypatch.setattr("app.routers.chat.end_session_and_summarize", _noop)
 
     session_a = "session-isolation-a"
     session_b = "session-isolation-b"
