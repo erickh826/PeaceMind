@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 import uuid
 from types import SimpleNamespace
 
@@ -34,7 +35,7 @@ from sqlalchemy import select, text
 
 from app.db import get_session
 from app.db.models import ConversationSession, User
-from app.db.models_profile import ProfileTopic, SessionSummary, UserProfile
+from app.db.models_profile import ProfileChangeLog, ProfileTopic, SessionSummary, UserProfile
 from app.main import app
 
 pytestmark = pytest.mark.skipif(
@@ -57,12 +58,15 @@ def _dummy_azure_deployment_env(monkeypatch):
 class FakeAzureClient:
     """假的 AzureOpenAI client：每次 create() 依序回傳 response_jsons 裡的下一筆，並計數呼叫次數。"""
 
-    def __init__(self, *response_jsons: dict):
+    def __init__(self, *response_jsons: dict, delay_seconds: float = 0.0):
         self._responses = list(response_jsons)
+        self._delay_seconds = delay_seconds
         self.call_count = 0
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
     def _create(self, **kwargs):
+        if self._delay_seconds:
+            time.sleep(self._delay_seconds)
         self.call_count += 1
         data = self._responses.pop(0) if self._responses else {}
         return SimpleNamespace(
@@ -102,6 +106,7 @@ def test_post_chat_updates_extract_profile_and_topics_in_a_single_llm_call(monke
     fake_client = FakeAzureClient({
         "display_name": "Alex",
         "year_of_study": "Year 2",
+        "risk_level": "medium",
         "profile_updates": {},
         "corrections": [],
         "topics": ["Academic Stress"],
@@ -127,9 +132,56 @@ def test_post_chat_updates_extract_profile_and_topics_in_a_single_llm_call(monke
             assert profile is not None
             assert profile.display_name == "Alex"
             assert profile.year_of_study == "Year 2"
+            assert profile.risk_level == "medium"
+            risk_log = await db.scalar(
+                select(ProfileChangeLog).where(
+                    ProfileChangeLog.user_id == user.id,
+                    ProfileChangeLog.field_path == "risk_level",
+                )
+            )
+            assert risk_log is not None
+            assert risk_log.old_value == "none"
+            assert risk_log.new_value == "medium"
+            assert risk_log.source == "system_inferred"
             topic = await db.get(ProfileTopic, (user.id, "Academic Stress"))
             assert topic is not None
             assert topic.mention_count == 1
+
+    _run(check())
+    _run(_cleanup(session_id))
+
+
+def test_invalid_risk_level_from_llm_is_ignored(monkeypatch):
+    session_id = _new_session_id("invalid-risk")
+    fake_client = FakeAzureClient({
+        "display_name": None,
+        "year_of_study": None,
+        "risk_level": "severe",
+        "profile_updates": {},
+        "corrections": [],
+        "topics": [],
+    })
+    monkeypatch.setattr("app.routers.chat.chat_with_llm", fake_chat_with_llm)
+    monkeypatch.setattr("app.core.profile_service.get_azure_client", lambda: fake_client)
+
+    client = TestClient(app)
+    resp = client.post("/api/v1/chat", json={"session_id": session_id, "message": "今日有少少攰"})
+    assert resp.status_code == 200
+
+    async def check():
+        async with get_session() as db:
+            user = await db.scalar(select(User).where(User.external_ref == session_id))
+            profile = await db.get(UserProfile, user.id)
+            assert profile.risk_level == "none"
+            risk_logs = (
+                await db.execute(
+                    select(ProfileChangeLog).where(
+                        ProfileChangeLog.user_id == user.id,
+                        ProfileChangeLog.field_path == "risk_level",
+                    )
+                )
+            ).scalars().all()
+            assert risk_logs == []
 
     _run(check())
     _run(_cleanup(session_id))
@@ -259,6 +311,46 @@ def test_chat_end_then_reset_does_not_duplicate_summary(monkeypatch):
                 await db.execute(select(SessionSummary).where(SessionSummary.user_id == user.id))
             ).scalars().all()
             assert len(summaries) == 1
+
+    _run(check())
+    _run(_cleanup(session_id))
+
+
+def test_concurrent_chat_end_calls_do_not_duplicate_summary(monkeypatch):
+    from app.core.session_summarizer import end_session_and_summarize
+
+    session_id = _new_session_id("concurrent-end")
+    monkeypatch.setattr("app.routers.chat.chat_with_llm", fake_chat_with_llm)
+    monkeypatch.setattr(
+        "app.core.profile_service.get_azure_client",
+        lambda: FakeAzureClient({"display_name": None, "year_of_study": None, "profile_updates": {}, "corrections": [], "topics": []}),
+    )
+    fake_summarizer = FakeAzureClient({
+        "summary_text": "race-safe summary", "key_events": [], "emotions": [], "strategies_used": [],
+    }, delay_seconds=0.2)
+    monkeypatch.setattr("app.core.session_summarizer.get_azure_client", lambda: fake_summarizer)
+
+    client = TestClient(app)
+    resp = client.post("/api/v1/chat", json={"session_id": session_id, "message": "hello"})
+    assert resp.status_code == 200
+
+    async def run_concurrently():
+        await asyncio.gather(
+            end_session_and_summarize(session_id),
+            end_session_and_summarize(session_id),
+        )
+
+    _run(run_concurrently())
+    assert fake_summarizer.call_count == 1
+
+    async def check():
+        async with get_session() as db:
+            user = await db.scalar(select(User).where(User.external_ref == session_id))
+            summaries = (
+                await db.execute(select(SessionSummary).where(SessionSummary.user_id == user.id))
+            ).scalars().all()
+            assert len(summaries) == 1
+            assert summaries[0].summary_text == "race-safe summary"
 
     _run(check())
     _run(_cleanup(session_id))

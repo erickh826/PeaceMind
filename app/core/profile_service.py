@@ -20,6 +20,7 @@ import os
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.core.clinical_topics import STANDARD_CLINICAL_TOPICS
 from app.core.llm_client import get_azure_client
@@ -28,6 +29,8 @@ from app.db.models import ConversationSession
 from app.db.models_profile import ProfileChangeLog, ProfileTopic, UserProfile
 
 logger = logging.getLogger(__name__)
+
+VALID_RISK_LEVELS = {"none", "low", "medium", "high"}
 
 
 async def process_post_chat_updates(session_client_key: str, user_msg: str, assistant_reply: str) -> None:
@@ -62,15 +65,19 @@ async def analyze_and_update_profile(
         await db.flush()
 
     topics_list = ", ".join(STANDARD_CLINICAL_TOPICS)
-    prompt = f"""Analyze the conversation turn and output a single JSON object covering two tasks:
+    prompt = f"""Analyze the conversation turn and output a single JSON object covering three tasks:
 1. Profile extraction — detect display name, year of study, and any corrections to
    previously known attributes.
 2. Topic classification — classify the user's message into standard clinical concern topics.
    Only include topics that are clearly present; return an empty list if none apply.
+3. Risk-level maintenance — conservatively assess the student's current clinical risk level.
+   Use only: none, low, medium, high, or null when there is no clear update.
+   Do not infer "high" from ordinary stress, sadness, or academic pressure alone.
 
 Current User Profile: {profile.profile_json}
 Current Name: {profile.display_name}
 Current Year of Study: {profile.year_of_study}
+Current Risk Level: {profile.risk_level}
 Standard Topics: {topics_list}
 
 Turn:
@@ -81,19 +88,13 @@ Return JSON format:
 {{
   "display_name": "extracted_name or null",
   "year_of_study": "extracted_year_of_study or null",
+  "risk_level": "none|low|medium|high|null",
   "profile_updates": {{"hobby": "value"}},
   "corrections": [{{"field": "display_name", "old_value": "...", "new_value": "..."}}],
   "topics": ["Topic1", "Topic2"]
 }}"""
 
-    client = get_azure_client()
-    res = client.chat.completions.create(
-        model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.0,
-        response_format={"type": "json_object"},
-    )
-    data = json.loads(res.choices[0].message.content or "{}")
+    data = await _analyze_turn_with_llm(prompt)
 
     # 1. Apply display name & year updates
     if data.get("display_name"):
@@ -108,11 +109,21 @@ Return JSON format:
         profile.profile_json = merged
 
     # 3. Log corrections in ProfileChangeLog
+    risk_was_user_corrected = False
     for corr in data.get("corrections", []):
+        field_path = corr["field"]
+        if field_path == "risk_level":
+            corrected_risk = _normalize_risk_level(corr.get("new_value"))
+            if corrected_risk is None:
+                continue
+            corr["old_value"] = profile.risk_level
+            corr["new_value"] = corrected_risk
+            profile.risk_level = corrected_risk
+            risk_was_user_corrected = True
         db.add(
             ProfileChangeLog(
                 user_id=user_id,
-                field_path=corr["field"],
+                field_path=field_path,
                 old_value=corr.get("old_value"),
                 new_value=corr.get("new_value"),
                 source="user_correction",
@@ -120,7 +131,27 @@ Return JSON format:
             )
         )
 
-    # 4. Topic evolution — only recognized standard topics count
+    # 4. Risk-level maintenance — only accepted values are persisted
+    inferred_risk = _normalize_risk_level(data.get("risk_level"))
+    if (
+        inferred_risk is not None
+        and not risk_was_user_corrected
+        and inferred_risk != profile.risk_level
+    ):
+        old_risk = profile.risk_level
+        profile.risk_level = inferred_risk
+        db.add(
+            ProfileChangeLog(
+                user_id=user_id,
+                field_path="risk_level",
+                old_value=old_risk,
+                new_value=inferred_risk,
+                source="system_inferred",
+                session_id=session_id,
+            )
+        )
+
+    # 5. Topic evolution — only recognized standard topics count
     for t in data.get("topics", []):
         if t not in STANDARD_CLINICAL_TOPICS:
             continue
@@ -133,3 +164,28 @@ Return JSON format:
 
     # 單一 commit：profile + change log + topics 一起落地
     await db.commit()
+
+
+async def _analyze_turn_with_llm(prompt: str) -> dict:
+    """Run the blocking Azure SDK call in a thread so async routes do not block the event loop."""
+    return await run_in_threadpool(_analyze_turn_with_llm_sync, prompt)
+
+
+def _analyze_turn_with_llm_sync(prompt: str) -> dict:
+    client = get_azure_client()
+    res = client.chat.completions.create(
+        model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.0,
+        response_format={"type": "json_object"},
+    )
+    return json.loads(res.choices[0].message.content or "{}")
+
+
+def _normalize_risk_level(value) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if normalized not in VALID_RISK_LEVELS:
+        return None
+    return normalized

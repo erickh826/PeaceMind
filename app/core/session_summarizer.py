@@ -16,6 +16,7 @@ import logging
 import os
 
 from sqlalchemy import func, select
+from starlette.concurrency import run_in_threadpool
 
 from app.core.llm_client import get_azure_client
 from app.db import get_session
@@ -39,7 +40,9 @@ async def end_session_and_summarize(session_client_key: str) -> None:
     try:
         async with get_session() as db:
             session_row = await db.scalar(
-                select(ConversationSession).where(ConversationSession.client_key == session_client_key)
+                select(ConversationSession)
+                .where(ConversationSession.client_key == session_client_key)
+                .with_for_update()
             )
             if not session_row:
                 return
@@ -88,6 +91,10 @@ Return JSON format:
   "strategies_used": [{{"strategy": "...", "resource_ids": []}}]
 }}"""
 
+    return await run_in_threadpool(_generate_summary_sync, prompt)
+
+
+def _generate_summary_sync(prompt: str) -> dict:
     client = get_azure_client()
     res = client.chat.completions.create(
         model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
