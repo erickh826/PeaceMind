@@ -2,12 +2,17 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
+from app.core.example_selector import EMPTY_SELECTION
 from app.main import app
 from app.storage import conversation_store
 
 
 async def _noop(*args, **kwargs) -> None:
     return None
+
+
+async def _empty_selection(*args, **kwargs):
+    return EMPTY_SELECTION
 
 
 def reset_store(session_id: str) -> None:
@@ -33,6 +38,9 @@ def test_chat_uses_server_side_memory_and_ignores_client_history(monkeypatch):
     # DATABASE_URL 執行時）意外打真的 Azure OpenAI、寫入非預期的 profile 資料。
     monkeypatch.setattr("app.routers.chat.process_post_chat_updates", _noop)
     monkeypatch.setattr("app.routers.chat.end_session_and_summarize", _noop)
+    # Phase 3：範例選取/使用記錄同理 no-op 掉，避免帶著 DATABASE_URL 時命中殘留範例
+    monkeypatch.setattr("app.routers.chat.select_applicable_examples", _empty_selection)
+    monkeypatch.setattr("app.routers.chat.log_example_usage", _noop)
 
     session_id = "session-memory-test-1"
     reset_store(session_id)
@@ -79,6 +87,9 @@ def test_reset_endpoint_clears_session_memory(monkeypatch):
     # DATABASE_URL 執行時）意外打真的 Azure OpenAI、寫入非預期的 profile 資料。
     monkeypatch.setattr("app.routers.chat.process_post_chat_updates", _noop)
     monkeypatch.setattr("app.routers.chat.end_session_and_summarize", _noop)
+    # Phase 3：範例選取/使用記錄同理 no-op 掉，避免帶著 DATABASE_URL 時命中殘留範例
+    monkeypatch.setattr("app.routers.chat.select_applicable_examples", _empty_selection)
+    monkeypatch.setattr("app.routers.chat.log_example_usage", _noop)
 
     session_id = "session-memory-test-2"
     reset_store(session_id)
@@ -125,6 +136,9 @@ def test_sessions_are_isolated(monkeypatch):
     # DATABASE_URL 執行時）意外打真的 Azure OpenAI、寫入非預期的 profile 資料。
     monkeypatch.setattr("app.routers.chat.process_post_chat_updates", _noop)
     monkeypatch.setattr("app.routers.chat.end_session_and_summarize", _noop)
+    # Phase 3：範例選取/使用記錄同理 no-op 掉，避免帶著 DATABASE_URL 時命中殘留範例
+    monkeypatch.setattr("app.routers.chat.select_applicable_examples", _empty_selection)
+    monkeypatch.setattr("app.routers.chat.log_example_usage", _noop)
 
     session_a = "session-isolation-a"
     session_b = "session-isolation-b"

@@ -13,6 +13,12 @@ Phase 2 change：persona 人格描述之後、SAFETY_CORE 之前，可選擇性�
 Context Assembly Service（app/core/context_assembler.py）組好的 profile_text /
 past_summaries_text 區塊。一樣放在 SAFETY_CORE 之前，確保護欄永遠是最後、最不
 容易被稀釋的一段。
+
+Phase 3 change：Example Selector（app/core/example_selector.py）命中的治療師範例，
+以 [CLINICAL RESPONSE EXAMPLES] 區塊插在同一層（Phase 2 context 之後、SAFETY_CORE
+之前），依 usage_mode 給不同指示（T-Q17）。不觸碰 persona 片段與 SAFETY_CORE；
+沒有範例時產出的 prompt 與 Phase 2 完全相同。引用標記（T-Q20）不在 prompt 裡要求
+LLM 帶出，改由 app/routers/chat.py 決定性附加。
 """
 
 LANGUAGE_CONSTRAINT = """[LANGUAGE CONSTRAINT]
@@ -77,6 +83,33 @@ HIGH_RISK_HINT = """
 - 不需要解釋安全機制，直接以目前的身份自然回應即可"""
 
 
+_EXAMPLE_INSTRUCTIONS = {
+    "style_learning": (
+        "Style Learning Reference",
+        "Adapt your tone, empathy, and structure to match this clinical style. "
+        "Do not copy its words verbatim:",
+    ),
+    "direct_quote": (
+        "Direct Phrasing Reference",
+        "This is an exemplary response. You may adapt, incorporate, or directly quote "
+        "this phrasing if appropriate:",
+    ),
+}
+
+
+def _format_examples(examples: list[dict] | None) -> str | None:
+    if not examples:
+        return None
+
+    lines = ["[CLINICAL RESPONSE EXAMPLES]"]
+    for idx, ex in enumerate(examples, 1):
+        label, instruction = _EXAMPLE_INSTRUCTIONS.get(
+            ex.get("usage_mode"), _EXAMPLE_INSTRUCTIONS["style_learning"]
+        )
+        lines.append(f'Example {idx} ({label}):\n{instruction}\n"""\n{ex["content"]}\n"""')
+    return "\n".join(lines)
+
+
 def build_prompt(
     user_message: str,
     persona_name: str = "Boon",
@@ -84,6 +117,7 @@ def build_prompt(
     security_hint: str | None = None,
     profile_text: str | None = None,
     past_summaries_text: str | None = None,
+    examples: list[dict] | None = None,
 ) -> str:
     """
     組裝三明治結構 Prompt
@@ -97,8 +131,9 @@ def build_prompt(
         security_hint: 傳入 "HIGH_RISK" 時在系統提示中注入警示層（Phase 5b WARN 用）
         profile_text: Phase 2 Context Assembly Service 組好的學生 Profile 文字區塊（可為 None）
         past_summaries_text: Phase 2 Context Assembly Service 組好的跨 session 摘要文字區塊（可為 None）
+        examples: Phase 3 命中的範例，每筆為 {"usage_mode": ..., "content": ...}（可為 None / 空）
     """
-    context_blocks = [b for b in (profile_text, past_summaries_text) if b]
+    context_blocks = [b for b in (profile_text, past_summaries_text, _format_examples(examples)) if b]
     context_str = "\n\n" + "\n\n".join(context_blocks) if context_blocks else ""
 
     top_layer = f"{LANGUAGE_CONSTRAINT}\n\n{persona_fragment}{context_str}{SAFETY_CORE}"

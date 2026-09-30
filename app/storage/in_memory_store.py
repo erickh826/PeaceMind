@@ -24,15 +24,17 @@ class InMemoryConversationStore(ConversationStore):
 
     async def append(
         self, session_id: str, role: str, content: str, persona_id: str | None = None
-    ) -> None:
+    ) -> str | None:
         # persona_id 目前只有 PostgresConversationStore 會儲存（見 T-Q14），
         # InMemoryConversationStore 沒有結構化欄位可放，靜默忽略即可。
+        # 同理沒有結構化的 message id 可回傳，一律回傳 None（Phase 3 的
+        # example_usage_log 只在有 DB 時才會寫入，不會用到這個回傳值）。
         if role not in ("user", "assistant"):
-            return
+            return None
 
         text = content.strip()
         if not text:
-            return
+            return None
 
         with self._lock:
             self._prune_expired()
@@ -41,6 +43,7 @@ class InMemoryConversationStore(ConversationStore):
             if len(bucket) > self.max_messages:
                 self._sessions[session_id] = bucket[-self.max_messages :]
             self._updated_at[session_id] = time.time()
+        return None
 
     async def reset(self, session_id: str) -> None:
         with self._lock:
