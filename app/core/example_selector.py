@@ -14,7 +14,9 @@ transaction 開始時間）。最多取 EXAMPLE_MATCH_LIMIT 則，避免 prompt 
 每則範例的影響力。
 
 DATABASE_URL 未設定、沒有 session_id、或該 session 還沒有對應 User 記錄時，
-回傳空結果，不阻擋對話。
+回傳空結果，不阻擋對話。查詢出錯（例如程式已部署但 Phase 3 migration 還沒套用到
+該環境的資料庫）也 fail-open 回傳空結果——範例只是回覆品質的加強，不是安全層，
+不該因為它讓 /chat 整個 500。
 
 已知取捨：這裡又對 users 表做了一次獨立查詢（Persona Resolver、Context Assembly
 各一次，這裡第三次）。為了不讓使用記錄寫入再查第四次，查到的 user_id 會一起
@@ -58,6 +60,14 @@ async def select_applicable_examples(session_client_key: str | None) -> ExampleS
     if not os.environ.get("DATABASE_URL") or not session_client_key:
         return EMPTY_SELECTION
 
+    try:
+        return await _select(session_client_key)
+    except Exception:
+        logger.exception("example selection failed, continuing without examples | session=%s", session_client_key)
+        return EMPTY_SELECTION
+
+
+async def _select(session_client_key: str) -> ExampleSelection:
     from sqlalchemy import select
 
     from app.db import get_session

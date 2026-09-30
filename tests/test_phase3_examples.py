@@ -95,6 +95,38 @@ def test_persona_resolver_and_example_selector_share_condition_matching():
     assert persona_resolver.EVOLVED_TOPIC_THRESHOLD == condition_matching.EVOLVED_TOPIC_THRESHOLD
 
 
+@pytest.mark.parametrize(
+    "conditions",
+    [
+        {},
+        {"topics_include": "Relationship"},  # 字串不是 list，會被逐字元比對、永遠不命中
+        {"topics_includ": ["Relationship"]},  # 打錯字的鍵
+        {"topics_include": []},
+        {"topics_include": ["ok", ""]},
+        {"year_of_study": 1},
+    ],
+)
+def test_validate_condition_json_rejects_never_matching_conditions(conditions):
+    with pytest.raises(ValueError):
+        condition_matching.validate_condition_json(conditions)
+
+
+def test_validate_condition_json_accepts_supported_keys():
+    conditions = {"year_of_study": "Year 1", "topics_include": ["Relationship"]}
+    assert condition_matching.validate_condition_json(conditions) == conditions
+
+
+def test_selector_fails_open_when_query_errors(monkeypatch):
+    from app.core import example_selector
+
+    async def broken_select(session_id):
+        raise RuntimeError('relation "response_examples" does not exist')
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://unused")
+    monkeypatch.setattr(example_selector, "_select", broken_select)
+    assert asyncio.run(example_selector.select_applicable_examples("any-session")) == EMPTY_SELECTION
+
+
 def test_in_memory_append_returns_none():
     store = InMemoryConversationStore()
     assert asyncio.run(store.append("in-memory-append-test", "assistant", "hello")) is None
@@ -423,6 +455,13 @@ def test_admin_examples_api_validation():
     # 空條件永遠不會命中，建立時就擋掉
     assert client.post(
         "/api/v1/admin/examples", json={"content": "x", "applicable_conditions_json": {}}
+    ).status_code == 422
+    for bad_conditions in ({"topics_include": "t"}, {"topics_includ": ["t"]}):
+        assert client.post(
+            "/api/v1/admin/examples", json={"content": "x", "applicable_conditions_json": bad_conditions}
+        ).status_code == 422
+    assert client.patch(
+        f"/api/v1/admin/examples/{uuid.uuid4()}", json={"applicable_conditions_json": {"foo": "bar"}}
     ).status_code == 422
     assert client.post(
         "/api/v1/admin/examples",

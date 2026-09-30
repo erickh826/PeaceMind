@@ -34,3 +34,31 @@ def condition_matches(condition_json: dict, profile_row, evolved_topics: set[str
             return False  # 未知條件鍵，安全預設不匹配
 
     return True
+
+
+def validate_condition_json(condition_json: dict) -> dict:
+    """
+    建立/修改條件時的格式檢查（Admin API 用，Phase 4 rules CRUD 也可沿用）。
+    condition_matches() 對空條件、未知鍵、型別錯誤都是「靜默不匹配」——執行期這是對的
+    安全預設，但在建立時放行，治療師會拿到一筆永遠不會生效、又看不出原因的設定。
+    例：{"topics_include": "Relationship"}（字串不是 list）會被逐字元比對、永遠不命中；
+    打錯字的 "topics_includ" 會被當未知鍵。這裡提早丟 ValueError 讓 API 回 422。
+    """
+    if not condition_json:
+        raise ValueError("條件不可為空（空條件永遠不會命中）")
+
+    for key, value in condition_json.items():
+        if key == "year_of_study":
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("year_of_study 必須是非空字串")
+        elif key == "topics_include":
+            if (
+                not isinstance(value, list)
+                or not value
+                or not all(isinstance(t, str) and t.strip() for t in value)
+            ):
+                raise ValueError("topics_include 必須是非空的字串陣列")
+        else:
+            raise ValueError(f"不支援的條件鍵：{key}（目前只支援 year_of_study、topics_include）")
+
+    return condition_json

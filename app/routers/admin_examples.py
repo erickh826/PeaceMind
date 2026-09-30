@@ -17,8 +17,10 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
+
+from app.core.condition_matching import validate_condition_json
 
 router = APIRouter()
 
@@ -48,19 +50,26 @@ def _parse_uuid(value: str, field_name: str) -> uuid.UUID:
 class ExampleCreateRequest(BaseModel):
     content: str = Field(..., min_length=1)
     # 例：{"year_of_study": "Year 1", "topics_include": ["Relationship"]}
-    # 空條件永遠不會命中（見 app/core/condition_matching.py），故要求至少一個條件
-    applicable_conditions_json: dict = Field(..., min_length=1)
+    # 空條件、未知鍵、型別錯誤都會讓範例永遠不命中，建立時就擋掉（validate_condition_json）
+    applicable_conditions_json: dict
     usage_mode: UsageMode = "style_learning"
     attribution_mode: AttributionMode = "anonymous"
     created_by: str | None = None  # therapist_id（暫時，見檔案頂端說明）
 
+    _check_conditions = field_validator("applicable_conditions_json")(validate_condition_json)
+
 
 class ExampleUpdateRequest(BaseModel):
     content: str | None = Field(default=None, min_length=1)
-    applicable_conditions_json: dict | None = Field(default=None, min_length=1)
+    applicable_conditions_json: dict | None = None
     usage_mode: UsageMode | None = None
     attribution_mode: AttributionMode | None = None
     status: ExampleStatus | None = None  # 封存用 "archived"，不提供硬刪除（保留 T-Q18 使用記錄）
+
+    @field_validator("applicable_conditions_json")
+    @classmethod
+    def _check_conditions(cls, value: dict | None) -> dict | None:
+        return None if value is None else validate_condition_json(value)
 
 
 class ExampleOut(BaseModel):

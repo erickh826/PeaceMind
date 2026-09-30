@@ -102,7 +102,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - [x] 3.5 使用記錄寫入 `example_usage_log`（T-Q18）
 - [x] 3.6 引用模式（anonymous/attributed）接進最終回覆組裝（T-Q20，`app/routers/chat.py` 的 `ATTRIBUTION_TAG`）
 
-**完成判準**：治療師新增一則範例＋條件，符合條件的對話回覆風格明顯貼近範例。 ✅ 選取／注入／記錄／引用的邏輯已實作，`tests/test_phase3_examples.py` 在本機 Docker Postgres 全過（無 DB 時 11 項單元測試照跑，DB 整合測試 6 項）；全套 `pytest tests/` 193 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**仍未驗證的部分**：(1)「回覆風格明顯貼近範例」需要真的 Azure OpenAI 跑過才能主觀判斷，自動化測試 mock 了 LLM，只驗證範例有正確進入 prompt；(2) 尚未在 Supabase 正式環境跑過 `5c3e9a1f7d20` migration（跟 Phase 1/2 的驗證債務一起，建議 merge 前補，見計畫文件最後一節）。
+**完成判準**：治療師新增一則範例＋條件，符合條件的對話回覆風格明顯貼近範例。 ✅ 選取／注入／記錄／引用的邏輯已實作，`tests/test_phase3_examples.py` 在本機 Docker Postgres 全過（無 DB 時 19 項單元測試照跑，DB 整合測試 6 項）；全套 `pytest tests/` 201 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**仍未驗證的部分**：(1)「回覆風格明顯貼近範例」需要真的 Azure OpenAI 跑過才能主觀判斷，自動化測試 mock 了 LLM，只驗證範例有正確進入 prompt；(2) 尚未在 Supabase 正式環境跑過 `5c3e9a1f7d20` migration。**這是 merge 前的硬性前置條件，不是建議**：merge 進 `main` 會觸發 Vercel 部署，Supabase 必須先用 Session Pooler 跑完 `alembic upgrade head`（Selector 雖然已 fail-open，但 Admin API 與使用記錄仍需要這兩張表）。
 
 **實作筆記（與計畫文件的差異）**：
 - **`app/core/llm_client.py` 也要改**：計畫只列了 `chat.py` 和 `build_prompt()`，但 `chat.py` 是透過 `chat_with_llm()` 間接呼叫 `build_prompt()`，所以 `chat_with_llm()` 也加了 `examples` 參數往下傳。
@@ -110,7 +110,8 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - **L3 Output Gateway 攔截時**：不附加引用標記（回覆已被替換成罐頭訊息，跟範例無關），**也不寫 `example_usage_log`**（學生實際看到的回覆沒有用到範例，記進去會污染 T-Q18 的有效性統計）。危機（L1a CRISIS）與 L1b/L1c 阻擋路徑在 Example Selector 之前就 return，本來就不會選範例。
 - **Selector 回傳 `ExampleSelection(user_id, examples)`**，不是 ORM 物件列表：查到的 `user_id` 讓 `log_example_usage()` 沿用，不用再查第四次 `users` 表。但 Selector 本身仍是繼 Persona Resolver、Context Assembly 之後第三次獨立查 `users`——跟 Phase 2 記錄的已知取捨同類，延遲成為問題時再合併成一次查詢。
 - **排序多加 `id` 當最後的 tie-break**：計畫是「條件鍵數 → `created_at`」，但 `now()` 是 transaction 開始時間，同一個 transaction 種入的多筆範例 `created_at` 相同，排序就不是決定性的。
-- **`example_usage_log` 寫入失敗只記 log、不中斷回覆**（回覆已經產生，記錄問題不該讓學生收到 500）。
+- **`example_usage_log` 寫入失敗只記 log、不中斷回覆**（回覆已經產生，記錄問題不該讓學生收到 500）。**Selector 查詢出錯也 fail-open**（回傳空結果、記 log）：範例只是回覆品質的加強、不是安全層，萬一程式先部署、migration 還沒套到該環境，不該讓 `/chat` 整個 500。注意 Phase 1/2 的 `resolve_persona()` / `assemble_context()` 沒有這層保護。
+- **Admin API 在建立/修改時驗證條件格式**（`condition_matching.validate_condition_json()`，Phase 4 rules CRUD 可沿用）：只接受 `year_of_study`（非空字串）與 `topics_include`（非空字串陣列）。執行期比對對未知鍵、型別錯誤是「靜默不匹配」，若建立時放行，例如 `{"topics_include": "Relationship"}`（字串會被逐字元比對）或打錯字的鍵，治療師會拿到一筆永遠不生效又看不出原因的範例，所以直接回 422。
 - **Admin API**：`created_by` 選填，不帶則用 migration `cbda7ba4a1c9` 種入的 placeholder therapist（欄位是 NOT NULL）；帶了會先確認該治療師存在。`applicable_conditions_json` 至少要一個鍵（空條件依共用比對規則永遠不命中，建立時直接 422 擋掉）。不合法 UUID 回 400 而不是 500。只提供封存（`status: archived`），不提供硬刪除，保留使用記錄。跟 Persona API 一樣**沒有真實 auth**，上線前必須補（Phase 8）。
 - **條件比對抽到 `app/core/condition_matching.py`**（計畫第 4 點）：`persona_resolver.py` 保留 `_condition_matches` / `EVOLVED_TOPIC_THRESHOLD` 名稱 re-export，`context_assembler.py` 原本重複定義的門檻常數也改成 import 同一份。
 - `ConversationStore.append()` 回傳型別改成 `str | None`（Protocol + 兩個實作），`PostgresConversationStore` 用 `flush()` 取得新 message id。
@@ -195,7 +196,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**（2026-09-30 更新）：Phase 0、Phase 1、Phase 2 皆已完成並 merge 進 `main`（PR #1、PR #2），`main` 目前的部署基準已包含 Persona 系統與 Profile/主題演化/跨 Session 摘要功能。Vercel 正式環境的讀寫驗證目前仍只涵蓋 Phase 0 的 `/api/v1/chat` 基本流程；Phase 1 的 persona 指派 API 與 Phase 2 的 profile migration，尚未在 Supabase 正式環境個別驗證過（本機 Docker Postgres 驗證皆已通過）。目前工作分支為 `upgrade/phase3`（範例庫），Phase 3 程式碼已完成、本機 Docker Postgres 測試全過，尚未 merge 回 `main`；merge 前建議先補完 Phase 1–3 的 Supabase 正式環境驗證。
+5. **目前狀態**（2026-09-30 更新）：Phase 0、Phase 1、Phase 2 皆已完成並 merge 進 `main`（PR #1、PR #2），`main` 目前的部署基準已包含 Persona 系統與 Profile/主題演化/跨 Session 摘要功能。Vercel 正式環境的讀寫驗證目前仍只涵蓋 Phase 0 的 `/api/v1/chat` 基本流程；Phase 1 的 persona 指派 API 與 Phase 2 的 profile migration，尚未在 Supabase 正式環境個別驗證過（本機 Docker Postgres 驗證皆已通過）。目前工作分支為 `upgrade/phase3`（範例庫），Phase 3 程式碼已完成、本機 Docker Postgres 測試全過，尚未 merge 回 `main`；**merge 前必須先在 Supabase 套用 Phase 3 migration**，並建議順便補完 Phase 1/2 的正式環境驗證。
 
 ### ⚠️ 上線後的 Hotfix 記錄（Phase 0 資料庫連線層，2026-08-12）
 
