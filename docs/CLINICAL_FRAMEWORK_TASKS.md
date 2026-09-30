@@ -40,7 +40,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 ---
 
-## Phase 1 — Persona 系統（T-Q11–T-Q15 基礎）✅ 完成（2026-08-12）
+## Phase 1 — Persona 系統（T-Q11–T-Q15 基礎）✅ 完成並已合併進 `main`（PR #1，2026-08-19）
 > 目標：`system_prompt.py` 從寫死字串改為讀 `personas` 表；先只做「單一 default persona」跑通，暫不做自動匹配。
 
 - [x] 1.1 Migration：`personas`, `persona_match_conditions`, `persona_assignments`, `persona_switch_log`（`migrations/versions/102d7d73bbd7_*.py`），並補上 Phase 0 留空的 `sessions.persona_id` / `messages.persona_id` FK
@@ -51,7 +51,9 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - [x] 1.6 治療師手動指派 API：`POST /api/v1/admin/personas/assign`（+ `GET/POST /personas`, `PATCH /personas/{id}/activate`）
 - [x] 1.7 Persona 切換記錄寫入 `persona_switch_log`（`record_persona_usage()`，比對 session 目前 persona 與新解析結果）
 
-**完成判準**：可以在資料庫新增第二個 persona，指派給某個 user，該 user 下次對話行為改變；預設使用者不受影響。 ✅ 邏輯已實作並通過現有測試（169 passed，含 red-team 洩露偵測），**尚未在真實 Postgres 上實測手動指派流程**——下一步需要你在部署環境跑一次：建立第二個 persona → activate → assign 給某個 session_id → 確認下一次對話真的換了語氣。
+**完成判準**：可以在資料庫新增第二個 persona，指派給某個 user，該 user 下次對話行為改變；預設使用者不受影響。 ✅ 邏輯已實作並通過現有測試（169 passed，含 red-team 洩露偵測）。**手動指派流程已在本機 Docker Postgres 上跑過完整 E2E**（repo 根目錄的 `test_phase1_e2e.py`，`6f62129` / `a1e4e9c` commit，已隨 PR #1 進 `main`），並已修正 Windows 上 psycopg async 事件迴圈相容性問題（`d0f2899`）。**仍未驗證的部分**：尚未在 Supabase 正式環境對 `/api/v1/admin/personas/assign` 實際打過一次（目前正式環境的驗證僅涵蓋 Phase 0 的 `/api/v1/chat` 讀寫）。
+
+**Branch/Merge 狀態**：已透過 PR #1（`d80bf1f`）merge 進 `main`（2026-08-19），非「待 merge」。
 
 **實作筆記（與原設計的差異）**：
 - `ConversationStore.append()` 新增可選的 `persona_id` 參數，讓 `messages` 表能記錄每則訊息當時用的 persona（原設計 `messages.persona_id` 早就有欄位，但 Phase 0 沒有寫入邏輯，這次補上）。`InMemoryConversationStore` 收到這個參數會靜默忽略（沒有結構化欄位可放）。
@@ -61,7 +63,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 ---
 
-## Phase 2 — Profile / 主題演化 / 跨 Session 摘要（Q1–Q6）✅ 程式碼完成（2026-08-19）
+## Phase 2 — Profile / 主題演化 / 跨 Session 摘要（Q1–Q6）✅ 完成並已合併進 `main`（PR #2，2026-08-20）
 > 目標：Context Assembly Service 正式成形，Persona 自動匹配補完。
 > 設計依據：`docs/Phase2_implement_plan_Antigravity.md`（實作前已修正兩個問題，見該文件 §2）。
 
@@ -75,7 +77,9 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - [x] 2.8 補完 Phase 1.5 的 Persona 自動匹配（`persona_match_conditions`，`app/core/persona_resolver.py`）
 - [ ] 2.9 推薦策略依最新 Profile 動態調整（Q17）— **未實作**，Antigravity 原始計畫文件對這項只有目標敘述、沒有設計細節，實作時判斷屬於獨立範圍，先跳過，之後需要另外設計（前端 `REC_RULES` 怎麼接後端 profile）
 
-**完成判準**：模擬「上次講嗰個朋友」的對話，system 能撈到正確摘要並回應連貫。 ✅ 邏輯已實作並通過 `tests/test_phase2_profiles.py`（本機 Docker Postgres 驗證，5 項全過），**尚未在 Supabase 正式環境跑過 migration / E2E 驗證**，也還沒 merge 回 `main`。
+**完成判準**：模擬「上次講嗰個朋友」的對話，system 能撈到正確摘要並回應連貫。 ✅ 邏輯已實作並通過 `tests/test_phase2_profiles.py`（本機 Docker Postgres 驗證，5 項全過）。merge 進 `main` 後另有 `9f00a00` fix: stabilize phase 2 profile memory 的穩定性修正。**仍未驗證的部分**：尚未在 Supabase 正式環境跑過這批 migration（`1ade07baedf2_*`）與對應 E2E 驗證。
+
+**Branch/Merge 狀態**：已透過 PR #2（`4b9b4af`）merge 進 `main`（2026-08-20），非「待 merge」。
 
 **實作筆記（與 Antigravity 原始計畫的差異，落地前已修正）**：
 - **`session_summaries.session_id` 改成 `ON DELETE SET NULL`**（原設計是 `CASCADE`）。原設計會讓 `/api/v1/reset` 在寫入摘要後緊接著把 `sessions` 那筆刪掉，`CASCADE` 會讓剛寫入的摘要在同一輪請求裡被連坐刪除——Q4–Q6 的跨 session 記憶會永遠留不住任何東西。這個修正已同步進 `docs/CLINICAL_FRAMEWORK_ARCHITECTURE.md` 的 DDL，兩份文件目前一致。
@@ -178,7 +182,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**：Phase 0 已完成、merge 進 `main`、**Vercel 部署成功確認**，且已經歷一輪資料庫連線層的 hotfix（詳見下方記錄），目前正式環境穩定運作於 Supabase + psycopg + Transaction Pooler。Phase 1（Persona 系統）已在 `upgrade/phase1` branch 完成程式碼與本地測試，接下來要把這輪 hotfix 帶進該 branch，繼續驗證 persona 指派流程。
+5. **目前狀態**（2026-09-30 更新）：Phase 0、Phase 1、Phase 2 皆已完成並 merge 進 `main`（PR #1、PR #2），`main` 目前的部署基準已包含 Persona 系統與 Profile/主題演化/跨 Session 摘要功能。Vercel 正式環境的讀寫驗證目前仍只涵蓋 Phase 0 的 `/api/v1/chat` 基本流程；Phase 1 的 persona 指派 API 與 Phase 2 的 profile migration，尚未在 Supabase 正式環境個別驗證過（本機 Docker Postgres 驗證皆已通過）。目前工作分支為 `upgrade/phase3`（範例庫），除這次文件狀態更新外與 `main` 無程式碼差異，規劃文件（`docs/Phase3_Phase4_implement_plan_Antigravity.md`）已就位，可以直接開始 Phase 3 開發。
 
 ### ⚠️ 上線後的 Hotfix 記錄（Phase 0 資料庫連線層，2026-08-12）
 
