@@ -67,11 +67,21 @@ def _normalize_database_url(database_url: str) -> str:
     """
     移除 psycopg 不認得的查詢參數（目前已知：pgbouncer=true，Prisma 風格
     連線字串常見於 Supabase/Neon 的 transaction pooler URL）。
+
+    另外把裸 scheme（`postgresql://` / `postgres://`）自動補成
+    `postgresql+psycopg://`——Neon/Supabase 等託管方給的連線字串預設都是裸
+    scheme，但 create_async_engine() 需要明確的 async driver 後綴，否則
+    SQLAlchemy 會當成預設同步 psycopg2 驅動，async 引擎直接噴錯（跟當初
+    asyncpg → psycopg 的 hotfix 是同一類坑，見本檔案頂端說明）。已經帶
+    driver 後綴（例如 `+psycopg`）的字串不受影響。
     """
     parts = urlsplit(database_url)
+    scheme = parts.scheme
+    if scheme in ("postgresql", "postgres"):
+        scheme = "postgresql+psycopg"
     query_pairs = [(k, v) for k, v in parse_qsl(parts.query) if k.lower() != "pgbouncer"]
     new_query = urlencode(query_pairs)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
+    return urlunsplit((scheme, parts.netloc, parts.path, new_query, parts.fragment))
 
 
 def get_engine() -> AsyncEngine:
