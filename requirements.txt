@@ -7,5 +7,8 @@ pytest>=8.2.0
 httpx>=0.27.0  # for TestClient
 langdetect>=1.0.9
 sqlalchemy>=2.0.30
+# 明確列出 greenlet：SQLAlchemy async 需要它，理論上會依平台 marker 自動帶入，
+# 但 Vercel 建置環境沒有正確解析，導致 import 階段就 ModuleNotFoundError
+greenlet>=3.0.0
 psycopg[binary]>=3.1.18
 alembic>=1.13.1
