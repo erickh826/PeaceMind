@@ -7,7 +7,7 @@
 **PeaceMind**（原本代號「阿本 / Boon」）是樹仁大學輔導中心的心理健康支持 PoC chatbot。原本是一個安全過濾做得不錯、但功能單薄的 chatbot（三層防禦 + 危機關鍵字偵測 + 單一寫死人格），目前正在依照使用者提供的完整臨床規格（學生旅程 Q1–Q17 + 治療師介入框架 T-Q1–T-Q20）擴充成一套完整系統。
 
 - 部署：Vercel（https://peace-mind-sjiv.vercel.app/），Python FastAPI 後端（`api/index.py` → `app.main.app`），`frontend/` 是 Node/Vite 的靜態前端 + 一個純 dev proxy（不是正式後端）
-- 資料庫：Supabase Postgres（見下方「資料庫連線層」的血淚教訓）
+- 資料庫：**Neon Postgres**（2026-10-02 從 Supabase 換過來；見下方「資料庫連線層」的血淚教訓，大部分是在 Supabase 時期踩到的，但對 Neon 一樣適用）
 
 ## 必看文件（依重要性排序）
 
@@ -31,7 +31,8 @@ Phase 0 的 `InMemoryConversationStore` → `PostgresConversationStore` 上線�
 - Engine 用 `poolclass=NullPool`（serverless 環境不該自己維護連線池，反正 Supabase Transaction Pooler 已經在做這件事了）。
 - `connect_args={"prepare_threshold": None}`（psycopg 對應 asyncpg 的 `statement_cache_size=0`，關掉 server-side prepared statement，PgBouncer transaction-mode 需要這個）。
 - `_normalize_database_url()` 會過濾掉 Supabase 連線字串常帶的 `?pgbouncer=true` 參數（psycopg 不認得這個 Prisma 風格的參數）。
-- **正式環境（Vercel）用 Supabase 的 Transaction Pooler（port 6543）**；**本機跑 `alembic upgrade head` 用 Session Pooler（port 5432）**——兩個 pooler 用途不同，不要搞混。
+- **（Supabase 時期）正式環境（Vercel）用 Transaction Pooler（port 6543）**；**本機跑 `alembic upgrade head` 用 Session Pooler（port 5432）**——兩個 pooler 用途不同，不要搞混。
+- **（Neon，2026-10-02 起）** Neon 給的連線字串是裸 `postgresql://`，`_normalize_database_url()` 會自動補成 `postgresql+psycopg://`；`requirements.txt` 明確 pin 了 `greenlet`（Vercel build 不會自動裝，少了會 `FUNCTION_INVOCATION_FAILED`），不要拿掉。
 - 密碼含特殊字元（如 `@`）記得做 URL encoding，不然連線字串解析會壞掉且錯誤訊息會很難懂（host 名稱會混進密碼片段）。
 
 這些全部都在 `app/db/__init__.py`，改這個檔案前一定要先看檔案開頭的註解，裡面每個決定都寫了原因。
@@ -39,9 +40,9 @@ Phase 0 的 `InMemoryConversationStore` → `PostgresConversationStore` 上線�
 ## 目前進度速覽
 
 - ✅ **Phase 0**（資料庫地基）：完成，已上線驗證
-- ✅ **Phase 1**（Persona 系統）：完成並已 merge 進 `main`（PR #1，2026-08-19）；手動指派流程已在本機 Docker Postgres 跑過 E2E，**尚未在 Supabase 正式環境驗證**
-- ✅ **Phase 2**（Profile / 主題演化 / 跨 Session 摘要）：完成並已 merge 進 `main`（PR #2，2026-08-20，後續 `9f00a00` 穩定性修正）；**migration 與 E2E 尚未在 Supabase 正式環境驗證**
-- 🔄 **Phase 3**（範例庫）：程式碼完成、本機 Docker Postgres 測試全過（`upgrade/phase3`），**尚未 merge、尚未在 Supabase 驗證**
+- ✅ **Phase 1**（Persona 系統）：完成並已 merge 進 `main`（PR #1，2026-08-19）；手動指派流程已在本機 Docker Postgres 跑過 E2E，schema 已在 Neon 正式環境就位，**persona 指派 API 尚未在正式環境實際打過**
+- ✅ **Phase 2**（Profile / 主題演化 / 跨 Session 摘要）：完成並已 merge 進 `main`（PR #2，2026-08-20，後續 `9f00a00` 穩定性修正）；migration 已套用到 Neon，**E2E 尚未在正式環境驗證**
+- 🔄 **Phase 3**（範例庫）：程式碼完成、本機 Docker Postgres 測試全過（`upgrade/phase3`），Neon 已 migrate 到 head `5c3e9a1f7d20`，**尚未 merge、正式環境 API 尚未實際打過**
 - ⬜ Phase 4–8：規劃在 `docs/CLINICAL_FRAMEWORK_TASKS.md`，還沒開始
 
 詳細狀態、每個 checkbox 的完成情況，去看 `docs/CLINICAL_FRAMEWORK_TASKS.md` 最新版本，這份 `CLAUDE.md` 不會逐項同步更新（避免兩份文件互相打架），有衝突以 `CLINICAL_FRAMEWORK_TASKS.md` 為準。

@@ -102,7 +102,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - [x] 3.5 使用記錄寫入 `example_usage_log`（T-Q18）
 - [x] 3.6 引用模式（anonymous/attributed）接進最終回覆組裝（T-Q20，`app/routers/chat.py` 的 `ATTRIBUTION_TAG`）
 
-**完成判準**：治療師新增一則範例＋條件，符合條件的對話回覆風格明顯貼近範例。 ✅ 選取／注入／記錄／引用的邏輯已實作，`tests/test_phase3_examples.py` 在本機 Docker Postgres 全過（無 DB 時 19 項單元測試照跑，DB 整合測試 6 項）；全套 `pytest tests/` 201 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**仍未驗證的部分**：(1)「回覆風格明顯貼近範例」需要真的 Azure OpenAI 跑過才能主觀判斷，自動化測試 mock 了 LLM，只驗證範例有正確進入 prompt；(2) 尚未在 Supabase 正式環境跑過 `5c3e9a1f7d20` migration。**這是 merge 前的硬性前置條件，不是建議**：merge 進 `main` 會觸發 Vercel 部署，Supabase 必須先用 Session Pooler 跑完 `alembic upgrade head`（Selector 雖然已 fail-open，但 Admin API 與使用記錄仍需要這兩張表）。
+**完成判準**：治療師新增一則範例＋條件，符合條件的對話回覆風格明顯貼近範例。 ✅ 選取／注入／記錄／引用的邏輯已實作，`tests/test_phase3_examples.py` 在本機 Docker Postgres 全過（無 DB 時 19 項單元測試照跑，DB 整合測試 6 項）；全套 `pytest tests/` 201 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**仍未驗證的部分**：(1)「回覆風格明顯貼近範例」需要真的 Azure OpenAI 跑過才能主觀判斷，自動化測試 mock 了 LLM，只驗證範例有正確進入 prompt；(2) ~~merge 前必須先在正式環境跑 `5c3e9a1f7d20` migration~~ ✅ **2026-10-02 已完成**：正式環境資料庫已從 Supabase 換成 **Neon**，Neon 目前停在 `5c3e9a1f7d20`（head），與本地 `migrations/versions` 最新版本一致，merge 前置條件已滿足。正式環境上的 Admin API / 範例注入實際打一次仍待 merge 部署後驗證。
 
 **實作筆記（與計畫文件的差異）**：
 - **`app/core/llm_client.py` 也要改**：計畫只列了 `chat.py` 和 `build_prompt()`，但 `chat.py` 是透過 `chat_with_llm()` 間接呼叫 `build_prompt()`，所以 `chat_with_llm()` 也加了 `examples` 參數往下傳。
@@ -196,7 +196,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**（2026-09-30 更新）：Phase 0、Phase 1、Phase 2 皆已完成並 merge 進 `main`（PR #1、PR #2），`main` 目前的部署基準已包含 Persona 系統與 Profile/主題演化/跨 Session 摘要功能。Vercel 正式環境的讀寫驗證目前仍只涵蓋 Phase 0 的 `/api/v1/chat` 基本流程；Phase 1 的 persona 指派 API 與 Phase 2 的 profile migration，尚未在 Supabase 正式環境個別驗證過（本機 Docker Postgres 驗證皆已通過）。目前工作分支為 `upgrade/phase3`（範例庫），Phase 3 程式碼已完成、本機 Docker Postgres 測試全過，尚未 merge 回 `main`；**merge 前必須先在 Supabase 套用 Phase 3 migration**，並建議順便補完 Phase 1/2 的正式環境驗證。
+5. **目前狀態**（2026-10-02 更新）：Phase 0、Phase 1、Phase 2 皆已完成並 merge 進 `main`（PR #1、PR #2）。**正式環境資料庫已從 Supabase 換成 Neon**（配套 hotfix：`hotfix/neon-bare-scheme`、`hotfix/missing-greenlet`，皆已 merge 進 `main`，並已 merge 進 `upgrade/phase3`），Neon schema 已在 head `5c3e9a1f7d20`，涵蓋 Phase 0–3 全部 migration。目前工作分支為 `upgrade/phase3`（範例庫），程式碼完成、本機 Docker Postgres 測試全過，正式環境 migration 已就位，**可以 push、開 PR、merge 進 `main`**。仍待補的正式環境驗證：Phase 1 persona 指派 API、Phase 2 profile/摘要流程、Phase 3 Admin API 與範例注入，各實際打一次。
 
 ### ⚠️ 上線後的 Hotfix 記錄（Phase 0 資料庫連線層，2026-08-12）
 
@@ -210,6 +210,8 @@ Phase 0 merge 進 `main` 並確認部署成功後，切換 Vercel `DATABASE_URL`
 | 4 | `OSError: Device or resource busy`（Vercel 上，SSL 連線建立階段） | `asyncpg` + `uvloop` 在 AWS Lambda 類沙盒環境的已知相容性問題 | **換 driver：`asyncpg` → `psycopg`（v3）** |
 | 5 | `failed to resolve host 'xxx@aws-0-...'` | 資料庫密碼含特殊字元（如 `@`），未做 URL encoding，破壞連線字串解析 | 密碼做 URL encode，或重設成純英數字密碼 |
 | 6 | Serverless process 「暖機」重用導致連線池 socket 狀態壞掉 | 模組層級全域連線池跨 invocation 重用 | 改用 `NullPool`，每次全新連線 |
+| 7 | （2026-10-02，換 Neon）async engine 無法使用 Neon 給的連線字串 | Neon 預設給裸 `postgresql://` scheme，SQLAlchemy 會選同步 driver | `_normalize_database_url()` 自動補成 `postgresql+psycopg://`（`hotfix/neon-bare-scheme`） |
+| 8 | （2026-10-02）Vercel 上 `FUNCTION_INVOCATION_FAILED` | Vercel build 沒有透過 SQLAlchemy 的 platform marker 裝到 `greenlet` | `requirements.txt` 明確 pin `greenlet`（`hotfix/missing-greenlet`） |
 
 **最終確認可用的正式環境設定**：
 - Driver：`postgresql+psycopg://`（不是 `+asyncpg`）
@@ -220,6 +222,8 @@ Phase 0 merge 進 `main` 並確認部署成功後，切換 Vercel `DATABASE_URL`
 **本機執行 migration 用 Supabase Session Pooler（port 5432）**，跟正式環境的 Transaction Pooler（6543）分開，見 `.env.example` 說明。
 
 ✅ **2026-08-12 確認：Vercel 部署成功，`/api/v1/chat` POST 請求正常運作，讀寫 Supabase 無誤。**
+
+🔁 **2026-10-02：正式環境資料庫改為 Neon。** 上面 Supabase 的 pooler 說明保留作為歷史紀錄；`psycopg` / `NullPool` / `prepare_threshold=None` 的設定對 Neon 的 pooled（PgBouncer transaction-mode）連線同樣適用，不要拿掉。Neon 已 migrate 到 head `5c3e9a1f7d20`。
 
 ---
 
