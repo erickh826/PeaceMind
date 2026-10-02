@@ -81,25 +81,27 @@ class PostgresConversationStore(ConversationStore):
 
     async def append(
         self, session_id: str, role: str, content: str, persona_id: str | None = None
-    ) -> None:
+    ) -> str | None:
         if role not in ("user", "assistant"):
-            return
+            return None
 
         text = content.strip()
         if not text:
-            return
+            return None
 
         async with get_session() as db:
             session_row = await self._get_or_create_session(db, session_id)
-            db.add(
-                Message(
-                    session_id=session_row.id,
-                    role=role,
-                    content=text,
-                    persona_id=uuid.UUID(persona_id) if persona_id else None,
-                )
+            message = Message(
+                session_id=session_row.id,
+                role=role,
+                content=text,
+                persona_id=uuid.UUID(persona_id) if persona_id else None,
             )
+            db.add(message)
+            await db.flush()  # 取得 message.id，供 Phase 3 example_usage_log 記錄是哪一則回覆
+            message_id = str(message.id)
             await db.commit()
+            return message_id
 
     async def reset(self, session_id: str) -> None:
         async with get_session() as db:

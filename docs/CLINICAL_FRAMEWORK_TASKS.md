@@ -40,7 +40,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 ---
 
-## Phase 1 — Persona 系統（T-Q11–T-Q15 基礎）✅ 完成（2026-08-12）
+## Phase 1 — Persona 系統（T-Q11–T-Q15 基礎）✅ 完成並已合併進 `main`（PR #1，2026-08-19）
 > 目標：`system_prompt.py` 從寫死字串改為讀 `personas` 表；先只做「單一 default persona」跑通，暫不做自動匹配。
 
 - [x] 1.1 Migration：`personas`, `persona_match_conditions`, `persona_assignments`, `persona_switch_log`（`migrations/versions/102d7d73bbd7_*.py`），並補上 Phase 0 留空的 `sessions.persona_id` / `messages.persona_id` FK
@@ -51,7 +51,9 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - [x] 1.6 治療師手動指派 API：`POST /api/v1/admin/personas/assign`（+ `GET/POST /personas`, `PATCH /personas/{id}/activate`）
 - [x] 1.7 Persona 切換記錄寫入 `persona_switch_log`（`record_persona_usage()`，比對 session 目前 persona 與新解析結果）
 
-**完成判準**：可以在資料庫新增第二個 persona，指派給某個 user，該 user 下次對話行為改變；預設使用者不受影響。 ✅ 邏輯已實作並通過現有測試（169 passed，含 red-team 洩露偵測），**尚未在真實 Postgres 上實測手動指派流程**——下一步需要你在部署環境跑一次：建立第二個 persona → activate → assign 給某個 session_id → 確認下一次對話真的換了語氣。
+**完成判準**：可以在資料庫新增第二個 persona，指派給某個 user，該 user 下次對話行為改變；預設使用者不受影響。 ✅ 邏輯已實作並通過現有測試（169 passed，含 red-team 洩露偵測）。**手動指派流程已在本機 Docker Postgres 上跑過完整 E2E**（repo 根目錄的 `test_phase1_e2e.py`，`6f62129` / `a1e4e9c` commit，已隨 PR #1 進 `main`），並已修正 Windows 上 psycopg async 事件迴圈相容性問題（`d0f2899`）。**仍未驗證的部分**：尚未在 Supabase 正式環境對 `/api/v1/admin/personas/assign` 實際打過一次（目前正式環境的驗證僅涵蓋 Phase 0 的 `/api/v1/chat` 讀寫）。
+
+**Branch/Merge 狀態**：已透過 PR #1（`d80bf1f`）merge 進 `main`（2026-08-19），非「待 merge」。
 
 **實作筆記（與原設計的差異）**：
 - `ConversationStore.append()` 新增可選的 `persona_id` 參數，讓 `messages` 表能記錄每則訊息當時用的 persona（原設計 `messages.persona_id` 早就有欄位，但 Phase 0 沒有寫入邏輯，這次補上）。`InMemoryConversationStore` 收到這個參數會靜默忽略（沒有結構化欄位可放）。
@@ -61,7 +63,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 ---
 
-## Phase 2 — Profile / 主題演化 / 跨 Session 摘要（Q1–Q6）✅ 程式碼完成（2026-08-19）
+## Phase 2 — Profile / 主題演化 / 跨 Session 摘要（Q1–Q6）✅ 完成並已合併進 `main`（PR #2，2026-08-20）
 > 目標：Context Assembly Service 正式成形，Persona 自動匹配補完。
 > 設計依據：`docs/Phase2_implement_plan_Antigravity.md`（實作前已修正兩個問題，見該文件 §2）。
 
@@ -75,7 +77,9 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - [x] 2.8 補完 Phase 1.5 的 Persona 自動匹配（`persona_match_conditions`，`app/core/persona_resolver.py`）
 - [ ] 2.9 推薦策略依最新 Profile 動態調整（Q17）— **未實作**，Antigravity 原始計畫文件對這項只有目標敘述、沒有設計細節，實作時判斷屬於獨立範圍，先跳過，之後需要另外設計（前端 `REC_RULES` 怎麼接後端 profile）
 
-**完成判準**：模擬「上次講嗰個朋友」的對話，system 能撈到正確摘要並回應連貫。 ✅ 邏輯已實作並通過 `tests/test_phase2_profiles.py`（本機 Docker Postgres 驗證，5 項全過），**尚未在 Supabase 正式環境跑過 migration / E2E 驗證**，也還沒 merge 回 `main`。
+**完成判準**：模擬「上次講嗰個朋友」的對話，system 能撈到正確摘要並回應連貫。 ✅ 邏輯已實作並通過 `tests/test_phase2_profiles.py`（本機 Docker Postgres 驗證，5 項全過）。merge 進 `main` 後另有 `9f00a00` fix: stabilize phase 2 profile memory 的穩定性修正。**仍未驗證的部分**：尚未在 Supabase 正式環境跑過這批 migration（`1ade07baedf2_*`）與對應 E2E 驗證。
+
+**Branch/Merge 狀態**：已透過 PR #2（`4b9b4af`）merge 進 `main`（2026-08-20），非「待 merge」。
 
 **實作筆記（與 Antigravity 原始計畫的差異，落地前已修正）**：
 - **`session_summaries.session_id` 改成 `ON DELETE SET NULL`**（原設計是 `CASCADE`）。原設計會讓 `/api/v1/reset` 在寫入摘要後緊接著把 `sessions` 那筆刪掉，`CASCADE` 會讓剛寫入的摘要在同一輪請求裡被連坐刪除——Q4–Q6 的跨 session 記憶會永遠留不住任何東西。這個修正已同步進 `docs/CLINICAL_FRAMEWORK_ARCHITECTURE.md` 的 DDL，兩份文件目前一致。
@@ -87,17 +91,31 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 ---
 
-## Phase 3 — 範例庫（T-Q16–T-Q19）
+## Phase 3 — 範例庫（T-Q16–T-Q19）✅ 程式碼完成（2026-09-30，`upgrade/phase3`，尚未 merge）
 > 目標：獨立 CRUD + Selector，先用固定條件測試，不接 Rule Engine。
+> 設計依據：`docs/Phase3_Phase4_implement_plan_Antigravity.md`（實作前已修正 5 個問題，見該文件 §2/§3 的 RESOLVED 段落，`9ade99c`）。
 
-- [ ] 3.1 Migration：`response_examples`, `example_usage_log`
-- [ ] 3.2 CRUD API：`POST/GET/PATCH /api/v1/admin/examples`
-- [ ] 3.3 Example Selector：依 `applicable_conditions_json` 比對目前 context，回傳命中範例
-- [ ] 3.4 `style_learning` vs `direct_quote` 兩種注入方式接進 prompt 組裝（T-Q17）
-- [ ] 3.5 使用記錄寫入 `example_usage_log`（T-Q18）
-- [ ] 3.6 引用模式（anonymous/attributed）接進最終回覆組裝（T-Q20）
+- [x] 3.1 Migration：`response_examples`, `example_usage_log`（`migrations/versions/5c3e9a1f7d20_*.py`，`app/db/models_example.py`）
+- [x] 3.2 CRUD API：`POST/GET/PATCH /api/v1/admin/examples`（`app/routers/admin_examples.py`）
+- [x] 3.3 Example Selector：依 `applicable_conditions_json` 比對目前 context，回傳命中範例（`app/core/example_selector.py`，最多 2 則）
+- [x] 3.4 `style_learning` vs `direct_quote` 兩種注入方式接進 prompt 組裝（T-Q17，`app/prompts/system_prompt.py` 的 `[CLINICAL RESPONSE EXAMPLES]` 區塊）
+- [x] 3.5 使用記錄寫入 `example_usage_log`（T-Q18）
+- [x] 3.6 引用模式（anonymous/attributed）接進最終回覆組裝（T-Q20，`app/routers/chat.py` 的 `ATTRIBUTION_TAG`）
 
-**完成判準**：治療師新增一則範例＋條件，符合條件的對話回覆風格明顯貼近範例。
+**完成判準**：治療師新增一則範例＋條件，符合條件的對話回覆風格明顯貼近範例。 ✅ 選取／注入／記錄／引用的邏輯已實作，`tests/test_phase3_examples.py` 在本機 Docker Postgres 全過（無 DB 時 19 項單元測試照跑，DB 整合測試 6 項）；全套 `pytest tests/` 201 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**仍未驗證的部分**：(1)「回覆風格明顯貼近範例」需要真的 Azure OpenAI 跑過才能主觀判斷，自動化測試 mock 了 LLM，只驗證範例有正確進入 prompt；(2) ~~merge 前必須先在正式環境跑 `5c3e9a1f7d20` migration~~ ✅ **2026-10-02 已完成**：正式環境資料庫已從 Supabase 換成 **Neon**，Neon 目前停在 `5c3e9a1f7d20`（head），與本地 `migrations/versions` 最新版本一致，merge 前置條件已滿足。正式環境上的 Admin API / 範例注入實際打一次仍待 merge 部署後驗證。
+
+**實作筆記（與計畫文件的差異）**：
+- **`app/core/llm_client.py` 也要改**：計畫只列了 `chat.py` 和 `build_prompt()`，但 `chat.py` 是透過 `chat_with_llm()` 間接呼叫 `build_prompt()`，所以 `chat_with_llm()` 也加了 `examples` 參數往下傳。
+- **引用標記只加在回傳給前端的回覆，不寫進 memory**（計畫原本是在寫入 memory 前附加）。寫進去的話，下一輪 history 會帶著「部分內容參考自臨床心理師建議」，LLM 可能在沒有引用範例的回合也模仿出這句話——等於又回到當初決定避免的「LLM 自由發揮歸屬語句」。`messages` 表與 `process_post_chat_updates()` 拿到的都是未加標記的原始回覆。
+- **L3 Output Gateway 攔截時**：不附加引用標記（回覆已被替換成罐頭訊息，跟範例無關），**也不寫 `example_usage_log`**（學生實際看到的回覆沒有用到範例，記進去會污染 T-Q18 的有效性統計）。危機（L1a CRISIS）與 L1b/L1c 阻擋路徑在 Example Selector 之前就 return，本來就不會選範例。
+- **Selector 回傳 `ExampleSelection(user_id, examples)`**，不是 ORM 物件列表：查到的 `user_id` 讓 `log_example_usage()` 沿用，不用再查第四次 `users` 表。但 Selector 本身仍是繼 Persona Resolver、Context Assembly 之後第三次獨立查 `users`——跟 Phase 2 記錄的已知取捨同類，延遲成為問題時再合併成一次查詢。
+- **排序多加 `id` 當最後的 tie-break**：計畫是「條件鍵數 → `created_at`」，但 `now()` 是 transaction 開始時間，同一個 transaction 種入的多筆範例 `created_at` 相同，排序就不是決定性的。
+- **`example_usage_log` 寫入失敗只記 log、不中斷回覆**（回覆已經產生，記錄問題不該讓學生收到 500）。**Selector 查詢出錯也 fail-open**（回傳空結果、記 log）：範例只是回覆品質的加強、不是安全層，萬一程式先部署、migration 還沒套到該環境，不該讓 `/chat` 整個 500。注意 Phase 1/2 的 `resolve_persona()` / `assemble_context()` 沒有這層保護。
+- **Admin API 在建立/修改時驗證條件格式**（`condition_matching.validate_condition_json()`，Phase 4 rules CRUD 可沿用）：只接受 `year_of_study`（非空字串）與 `topics_include`（非空字串陣列）。執行期比對對未知鍵、型別錯誤是「靜默不匹配」，若建立時放行，例如 `{"topics_include": "Relationship"}`（字串會被逐字元比對）或打錯字的鍵，治療師會拿到一筆永遠不生效又看不出原因的範例，所以直接回 422。
+- **Admin API**：`created_by` 選填，不帶則用 migration `cbda7ba4a1c9` 種入的 placeholder therapist（欄位是 NOT NULL）；帶了會先確認該治療師存在。`applicable_conditions_json` 至少要一個鍵（空條件依共用比對規則永遠不命中，建立時直接 422 擋掉）。不合法 UUID 回 400 而不是 500。只提供封存（`status: archived`），不提供硬刪除，保留使用記錄。跟 Persona API 一樣**沒有真實 auth**，上線前必須補（Phase 8）。
+- **條件比對抽到 `app/core/condition_matching.py`**（計畫第 4 點）：`persona_resolver.py` 保留 `_condition_matches` / `EVOLVED_TOPIC_THRESHOLD` 名稱 re-export，`context_assembler.py` 原本重複定義的門檻常數也改成 import 同一份。
+- `ConversationStore.append()` 回傳型別改成 `str | None`（Protocol + 兩個實作），`PostgresConversationStore` 用 `flush()` 取得新 message id。
+- `tests/test_chat_memory.py` 補上 `select_applicable_examples` / `log_example_usage` 的 no-op mock（跟 Phase 2 hook 同樣做法，避免帶著 `DATABASE_URL` 跑時命中殘留範例）。
 
 ---
 
@@ -178,7 +196,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**：Phase 0 已完成、merge 進 `main`、**Vercel 部署成功確認**，且已經歷一輪資料庫連線層的 hotfix（詳見下方記錄），目前正式環境穩定運作於 Supabase + psycopg + Transaction Pooler。Phase 1（Persona 系統）已在 `upgrade/phase1` branch 完成程式碼與本地測試，接下來要把這輪 hotfix 帶進該 branch，繼續驗證 persona 指派流程。
+5. **目前狀態**（2026-10-02 更新）：Phase 0、Phase 1、Phase 2 皆已完成並 merge 進 `main`（PR #1、PR #2）。**正式環境資料庫已從 Supabase 換成 Neon**（配套 hotfix：`hotfix/neon-bare-scheme`、`hotfix/missing-greenlet`，皆已 merge 進 `main`，並已 merge 進 `upgrade/phase3`），Neon schema 已在 head `5c3e9a1f7d20`，涵蓋 Phase 0–3 全部 migration。目前工作分支為 `upgrade/phase3`（範例庫），程式碼完成、本機 Docker Postgres 測試全過，正式環境 migration 已就位，**可以 push、開 PR、merge 進 `main`**。仍待補的正式環境驗證：Phase 1 persona 指派 API、Phase 2 profile/摘要流程、Phase 3 Admin API 與範例注入，各實際打一次。
 
 ### ⚠️ 上線後的 Hotfix 記錄（Phase 0 資料庫連線層，2026-08-12）
 
@@ -192,6 +210,8 @@ Phase 0 merge 進 `main` 並確認部署成功後，切換 Vercel `DATABASE_URL`
 | 4 | `OSError: Device or resource busy`（Vercel 上，SSL 連線建立階段） | `asyncpg` + `uvloop` 在 AWS Lambda 類沙盒環境的已知相容性問題 | **換 driver：`asyncpg` → `psycopg`（v3）** |
 | 5 | `failed to resolve host 'xxx@aws-0-...'` | 資料庫密碼含特殊字元（如 `@`），未做 URL encoding，破壞連線字串解析 | 密碼做 URL encode，或重設成純英數字密碼 |
 | 6 | Serverless process 「暖機」重用導致連線池 socket 狀態壞掉 | 模組層級全域連線池跨 invocation 重用 | 改用 `NullPool`，每次全新連線 |
+| 7 | （2026-10-02，換 Neon）async engine 無法使用 Neon 給的連線字串 | Neon 預設給裸 `postgresql://` scheme，SQLAlchemy 會選同步 driver | `_normalize_database_url()` 自動補成 `postgresql+psycopg://`（`hotfix/neon-bare-scheme`） |
+| 8 | （2026-10-02）Vercel 上 `FUNCTION_INVOCATION_FAILED` | Vercel build 沒有透過 SQLAlchemy 的 platform marker 裝到 `greenlet` | `requirements.txt` 明確 pin `greenlet`（`hotfix/missing-greenlet`） |
 
 **最終確認可用的正式環境設定**：
 - Driver：`postgresql+psycopg://`（不是 `+asyncpg`）
@@ -202,6 +222,8 @@ Phase 0 merge 進 `main` 並確認部署成功後，切換 Vercel `DATABASE_URL`
 **本機執行 migration 用 Supabase Session Pooler（port 5432）**，跟正式環境的 Transaction Pooler（6543）分開，見 `.env.example` 說明。
 
 ✅ **2026-08-12 確認：Vercel 部署成功，`/api/v1/chat` POST 請求正常運作，讀寫 Supabase 無誤。**
+
+🔁 **2026-10-02：正式環境資料庫改為 Neon。** 上面 Supabase 的 pooler 說明保留作為歷史紀錄；`psycopg` / `NullPool` / `prepare_threshold=None` 的設定對 Neon 的 pooled（PgBouncer transaction-mode）連線同樣適用，不要拿掉。Neon 已 migrate 到 head `5c3e9a1f7d20`。
 
 ---
 

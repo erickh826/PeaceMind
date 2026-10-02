@@ -17,12 +17,10 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
+from app.core.condition_matching import EVOLVED_TOPIC_THRESHOLD
 from app.db import get_session
 from app.db.models import User
 from app.db.models_profile import ProfileTopic, SessionSummary, UserProfile
-
-# 主題累積達到這個次數才視為「已演化」的核心主題，注入 prompt
-EVOLVED_TOPIC_THRESHOLD = 3
 
 MEMORY_TRIGGER_KEYWORDS = [
     "上次", "之前", "上次講", "上次說", "前幾次",

@@ -29,6 +29,7 @@ from app.core.llm_client import chat_with_llm
 from app.core.crisis_handler import get_crisis_response
 from app.core.persona_resolver import resolve_persona, record_persona_usage
 from app.core.context_assembler import assemble_context
+from app.core.example_selector import log_example_usage, select_applicable_examples
 from app.core.profile_service import process_post_chat_updates
 from app.core.session_summarizer import end_session_and_summarize
 from app.storage import conversation_store
@@ -48,6 +49,10 @@ _MULTITURN_BLOCK_MSG = (
     "不是一個可以被重新設定的系統。"
     "有什麼真實的感受想和我分享嗎？"
 )
+
+# T-Q20：本輪注入的範例中有 direct_quote + attributed 時，由程式碼決定性附加的引用標記
+# （不在 prompt 裡要求 LLM 自然帶出，見 docs/Phase3_Phase4_implement_plan_Antigravity.md §2）。
+ATTRIBUTION_TAG = "\n\n— 部分內容參考自臨床心理師建議"
 
 
 class Message(BaseModel):
@@ -153,6 +158,10 @@ async def chat(request: ChatRequest):
     # 載入 Profile（含演化主題）與相關跨 session 摘要，組進 system prompt
     context = await assemble_context(session_id, user_message)
 
+    # ── Example Selector（Phase 3）───────────────────────────────────────────
+    # 依 profile + 已演化主題挑出命中的治療師範例（最多 EXAMPLE_MATCH_LIMIT 則）
+    example_selection = await select_applicable_examples(session_id)
+
     # ── Layer 2: LLM Core（Azure OpenAI + Sandwich Prompt）──────────────────
     try:
         llm_reply = chat_with_llm(
@@ -163,6 +172,7 @@ async def chat(request: ChatRequest):
             persona_fragment=persona.system_prompt_fragment,
             profile_text=context.profile_text,
             past_summaries_text=context.past_summaries_text,
+            examples=[ex.to_prompt_dict() for ex in example_selection.examples],
         )
     except Exception as e:
         logger.error("LLM call failed: %s", str(e))
@@ -183,15 +193,33 @@ async def chat(request: ChatRequest):
             llm_reply[:80],
         )
 
+    intercepted = output_result.status == OutputStatus.INTERCEPTED
+
     # ── Memory 寫入 ──────────────────────────────────────────────────────────
     if session_id:
         await conversation_store.append(session_id, "user", user_message, persona_id=persona.id)
-        await conversation_store.append(session_id, "assistant", final_reply, persona_id=persona.id)
+        assistant_message_id = await conversation_store.append(
+            session_id, "assistant", final_reply, persona_id=persona.id
+        )
+
+        # ── 範例使用記錄（Phase 3，T-Q18）──────────────────────────────────
+        # L3 攔截時學生看到的是替換後的罐頭訊息、跟範例無關，不記錄，避免污染有效性統計
+        if not intercepted:
+            await log_example_usage(example_selection, session_id, assistant_message_id)
 
         # ── Post-processing（Phase 2，同步執行，見 profile_service.py 檔頭說明）─
         await process_post_chat_updates(session_id, user_message, final_reply)
 
-    intercepted = output_result.status == OutputStatus.INTERCEPTED
+    # ── 引用標記（Phase 3，T-Q20）─────────────────────────────────────────────
+    # 只附加在回傳給前端的回覆上，不寫進 memory：寫進去的話下一輪 history 會帶著
+    # 這段標記，LLM 可能在沒有引用範例的回合也模仿出「臨床心理師建議」字樣，
+    # 等於又回到不可控的 LLM 自由發揮。L3 攔截時回覆已被替換，不附加。
+    if not intercepted and any(
+        ex.usage_mode == "direct_quote" and ex.attribution_mode == "attributed"
+        for ex in example_selection.examples
+    ):
+        final_reply += ATTRIBUTION_TAG
+
     return ChatResponse(reply=final_reply, intercepted=intercepted, session_id=session_id)
 
 
