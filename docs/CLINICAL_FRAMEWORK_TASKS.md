@@ -122,14 +122,36 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 ## Phase 4 — Rule Engine（T-Q1–T-Q5）
 > 目標：規則統一調度 Persona + Example + 療法/語氣設定。
 
-- [ ] 4.1 Migration：`rules`, `rule_versions`
-- [ ] 4.2 條件比對引擎（Python，比對 `conditions_json` vs profile/topics/risk/history）
+- [ ] 4.1 Migration：`rules`, `rule_versions`；`messages.rule_id` 補 FK、新增 `messages.rule_version_id`、`messages.output_replaced`
+- [ ] 4.2 條件比對引擎（Python，比對 `conditions_json` vs profile/topics/risk）
 - [ ] 4.3 CRUD API + 每次變更寫 `rule_versions`（T-Q8 先做基礎版本，Phase 5 補審核流程）
 - [ ] 4.4 優先級排序、多規則衝突取最高優先（T-Q4）
 - [ ] 4.5 `scope` 生效範圍邏輯：new_conversations_only vs immediate（T-Q5）
 - [ ] 4.6 Rule action 接進 Context Assembly：覆寫 persona / 帶入 example_ids / 設定 therapy+tone
 
 **完成判準**：新增一條規則（如原文件範例：社交焦慮+low risk+第3次），命中時可觀察到 ACT 語氣、溫暖接納風格的回覆。
+
+**開工前的設計決策（2026-10-05 與使用者確認）**：
+
+1. **條件（rules-only 驗證模式）**：`validate_condition_json(..., mode="rule")` 額外接受 `risk_level` 與 `min_topic_mentions`；persona / example 的條件格式不變（仍只接受 `year_of_study`、`topics_include`）。
+   - `risk_level`：`none|low|medium|high` 之一，比對 Phase 2 由 LLM 推論（或使用者更正）的 `user_profiles.risk_level`。**這不是 Phase 6 的危機分級**，Phase 6 上線後再評估是否加新條件鍵。
+   - `min_topic_mentions`：正整數，**必須搭配 `topics_include`**；省略時沿用 `EVOLVED_TOPIC_THRESHOLD`（3）。`topics_include` 中**任一主題**自身次數達門檻即成立，不同主題的次數不合計。
+   - 次數是對話結束後的 post-processing 才累加，所以「第 3 次提到」那一輪不會命中，**累積滿 3 次後的下一輪**才觸發。
+   - `history_therapy_used` 延後：目前沒有記錄學生用過哪些療法的資料。
+2. **Action 格式**：`therapy`、`tone`（非空字串）、`persona_id`（必須存在的 persona）、`example_ids`（必須存在的範例 id 陣列），至少一個鍵。
+3. **Persona 優先序**：治療師手動指派 > 命中規則的 `persona_id` > `persona_match_conditions` 自動匹配 > 預設。手動指派只鎖住 persona；規則的 `therapy` / `tone` 對手動指派的學生仍然生效。
+4. **Therapy / tone 注入**：獨立的「本輪策略」prompt 區塊，放在 `context_blocks`（`SAFETY_CORE` 之前），不改寫 persona 片段；`SAFETY_CORE` 與三層安全閘門維持最高優先。
+5. **版本與 `scope`**：每次變更（建立、修改、啟用、封存、回滾）在**同一筆 transaction** 更新 `rules` 並寫一筆 `rule_versions` 快照；`scope` 與 `status` 都是快照的一部分。
+   - `new_conversations_only`：進行中的 session 沿用 session 開始時的版本（`rule_versions.created_at <= sessions.started_at` 的最新一筆），新 session 用新版；session 開始後才建立的規則不套用到該 session。
+   - `immediate`：進行中的 session 下一輪就用新版，不影響正在生成的回覆。
+   - 固定的是規則版本，不是命中結果：每輪仍依當下 profile 重新比對。
+   - **封存一律立即停用**，不論 `scope`。
+   - 適用版本由 `sessions.started_at` 與 `rule_versions.created_at` 推導、並記在每則回覆的 `messages.rule_version_id`，不另建 session 鎖定表。Phase 4 先不做 in-process cache（Vercel serverless + `NullPool`，跨 invocation 的快取不可靠），每輪直接查詢；延遲成為問題時再加只存「最新規則 + 版本識別」的快取。
+6. **規則衝突**：命中多條時取 `priority` 最高，再依 `created_at`、`id` 做決定性的 tie-break（同 Phase 3）。
+7. **範例合併**：規則指定的範例優先（依 `example_ids` 順序、去重、只用 `active`、不再檢查範例自身的條件），自動匹配補足，總上限 `EXAMPLE_MATCH_LIMIT`（2）。已封存的範例一律不選，包括舊規則引用的。
+8. **狀態**：Phase 4 允許授權管理者經 API 直接 `draft → active`，啟用前驗證條件、action 與引用對象（persona、範例）。Phase 5 加審核流程，Phase 8 再補真正的帳號與角色權限。
+   - **最低限度授權**：規則的寫入端點要求 `X-Admin-Key` header 等於環境變數 `ADMIN_API_KEY`；未設定時寫入端點一律拒絕（fail closed）。
+9. **每輪紀錄**：assistant message 寫入 `rule_id` 與 `rule_version_id`；L3 Output Gateway 替換回覆時仍記錄規則（規則確實用於生成），但標記 `output_replaced = true`，統計規則成效時排除，避免誤算。
 
 ---
 
