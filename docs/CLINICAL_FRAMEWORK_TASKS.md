@@ -144,7 +144,10 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 3. **Persona 優先序**：治療師手動指派 > 命中規則的 `persona_id` > `persona_match_conditions` 自動匹配 > 預設。手動指派只鎖住 persona；規則的 `therapy` / `tone` 對手動指派的學生仍然生效。
 4. **Therapy / tone 注入**：獨立的「本輪策略」prompt 區塊，放在 `context_blocks`（`SAFETY_CORE` 之前），不改寫 persona 片段；`SAFETY_CORE` 與三層安全閘門維持最高優先。
 5. **版本與 `scope`**：每次變更（建立、修改、啟用、封存、回滾）在**同一筆 transaction** 更新 `rules` 並寫一筆 `rule_versions` 快照；`scope` 與 `status` 都是快照的一部分。
-   - 適用版本 = 符合「`scope = immediate`」**或**「`created_at <= sessions.started_at`」的最新一筆版本（混合 scope 的版本歷史也要成立，需單元測試）；找不到則該規則不套用到這個 session。
+   - **先選版本，再看狀態**：適用版本 = 符合下列任一條件的最新一筆版本——快照 `status = archived`（封存視為立即生效的停用版本，不論快照的 `scope`）、快照 `scope = immediate`、或 `created_at <= sessions.started_at`。選出後**該版本的** `status` 是 `active` 才套用；找不到適用版本也不套用。**不能先篩選 active 再選版本**，否則會跳過停用版本、重新選中更舊的 active 版本。
+   - 必測案例：v1 active → v2 archived → v3 active（`new_conversations_only`）：在 v2 之前開始的舊 session 維持停用（選中 v2），v3 之後的新 session 用 v3。另測一般混合 scope 歷史。
+   - 改回 `draft` 等非 active 狀態跟其他修改一樣依該版本的 `scope` 生效。
+   - **首輪也要有時間基準**：目前 `get_history()` 找不到 session 時回空清單，session 要到回覆後 `append()` 才建立，首輪沒有 `started_at`。`ConversationStore` 新增 `ensure_session()`（Postgres 版 get-or-create 並回傳 `started_at`，InMemory 版回傳 `None`），`/chat` 通過 L1 安全檢查後、Rule Engine 之前先呼叫。
    - `new_conversations_only`：進行中的 session 沿用 session 開始時的版本，新 session 用新版；session 開始後才建立的規則不套用到該 session。
    - `immediate`：進行中的 session 下一輪就用新版，不影響正在生成的回覆。
    - 固定的是規則版本，不是命中結果：每輪仍依當下 profile 重新比對。
@@ -154,13 +157,14 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 6. **規則衝突**：命中多條時取 `priority` 最高，再依 `created_at`、`id` 做決定性的 tie-break（同 Phase 3）。
 7. **範例合併**：規則指定的範例優先（依 `example_ids` 順序、去重、只用 `active`、不再檢查範例自身的條件），自動匹配補足，總上限 `EXAMPLE_MATCH_LIMIT`（2）。已封存的範例一律不選，包括舊規則引用的。
 8. **狀態**：Phase 4 允許授權管理者經 API 直接 `draft → active`，啟用前驗證條件、action 與引用對象（persona、範例）。Phase 5 加審核流程，Phase 8 再補真正的帳號與角色權限。
-   - **最低限度授權**：規則的寫入端點要求 `X-Admin-Key` header 等於環境變數 `ADMIN_API_KEY`（`hmac.compare_digest` 比對）；未設定時寫入端點一律拒絕（fail closed）。`.env.example` 補上說明，測試明確設定這個值。
+   - **最低限度授權**：所有 admin **寫入**端點要求 `X-Admin-Key` header 等於環境變數 `ADMIN_API_KEY`（`hmac.compare_digest` 比對）；未設定時一律拒絕（fail closed）。`.env.example` 補上說明，測試明確設定這個值。
+   - 範圍不只規則：規則會引用 persona 與範例，只保護規則端點的話，未授權者仍可修改被引用的範例內容。所以同一個驗證也套用到既有的 `POST /examples`、`PATCH /examples/{id}`、`POST /personas`、`PATCH /personas/{id}/activate`、`POST /personas/assign`（讀取端點維持現狀）。這會改變既有端點行為，對應測試要補 header。
 9. **每輪紀錄**：assistant message 寫入 `rule_id` 與 `rule_version_id`；L3 Output Gateway 替換回覆時仍記錄規則（規則確實用於生成），但標記 `output_replaced = true`，統計規則成效時排除，避免誤算。
 10. **失敗處理**：Rule Engine 跟 Example Selector 一樣 fail-open，查詢出錯時記 log、視為沒有命中規則，`/chat` 不因此 500。合併後的範例清單同時用於 prompt、引用標記判斷與 `log_example_usage()`。
 
 **Merge 前的硬性前置條件**（比 Phase 3 更嚴格）：
 - **先在 Neon 跑 Phase 4 migration**：Phase 4 在 `messages` 加了欄位，ORM 每次 INSERT 都會帶上這些欄位；程式碼若比 migration 先上 Vercel，所有會寫 messages 的 `/chat` 都會 500，fail-open 救不了。新欄位都是 nullable 或有預設值，先 migrate 對目前的 `main` 是安全的。
-- **在 Vercel 設定 `ADMIN_API_KEY`**：否則 fail-closed 的寫入端點會讓正式環境無法建立任何規則。
+- **在 Vercel 設定 `ADMIN_API_KEY`**：否則 fail-closed 的寫入端點會讓正式環境無法建立任何規則，既有的 persona／範例／指派寫入也會一起失效。
 
 ---
 
