@@ -51,7 +51,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - [x] 1.6 治療師手動指派 API：`POST /api/v1/admin/personas/assign`（+ `GET/POST /personas`, `PATCH /personas/{id}/activate`）
 - [x] 1.7 Persona 切換記錄寫入 `persona_switch_log`（`record_persona_usage()`，比對 session 目前 persona 與新解析結果）
 
-**完成判準**：可以在資料庫新增第二個 persona，指派給某個 user，該 user 下次對話行為改變；預設使用者不受影響。 ✅ 邏輯已實作並通過現有測試（169 passed，含 red-team 洩露偵測）。**手動指派流程已在本機 Docker Postgres 上跑過完整 E2E**（repo 根目錄的 `test_phase1_e2e.py`，`6f62129` / `a1e4e9c` commit，已隨 PR #1 進 `main`），並已修正 Windows 上 psycopg async 事件迴圈相容性問題（`d0f2899`）。**仍未驗證的部分**：尚未在 Supabase 正式環境對 `/api/v1/admin/personas/assign` 實際打過一次（目前正式環境的驗證僅涵蓋 Phase 0 的 `/api/v1/chat` 讀寫）。
+**完成判準**：可以在資料庫新增第二個 persona，指派給某個 user，該 user 下次對話行為改變；預設使用者不受影響。 ✅ 邏輯已實作並通過現有測試（169 passed，含 red-team 洩露偵測）。**手動指派流程已在本機 Docker Postgres 上跑過完整 E2E**（repo 根目錄的 `test_phase1_e2e.py`，`6f62129` / `a1e4e9c` commit，已隨 PR #1 進 `main`），並已修正 Windows 上 psycopg async 事件迴圈相容性問題（`d0f2899`）。**正式環境驗證（2026-10-02，Neon）**：列出預設 persona 並成功指派給合成測試使用者。
 
 **Branch/Merge 狀態**：已透過 PR #1（`d80bf1f`）merge 進 `main`（2026-08-19），非「待 merge」。
 
@@ -77,7 +77,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - [x] 2.8 補完 Phase 1.5 的 Persona 自動匹配（`persona_match_conditions`，`app/core/persona_resolver.py`）
 - [ ] 2.9 推薦策略依最新 Profile 動態調整（Q17）— **未實作**，Antigravity 原始計畫文件對這項只有目標敘述、沒有設計細節，實作時判斷屬於獨立範圍，先跳過，之後需要另外設計（前端 `REC_RULES` 怎麼接後端 profile）
 
-**完成判準**：模擬「上次講嗰個朋友」的對話，system 能撈到正確摘要並回應連貫。 ✅ 邏輯已實作並通過 `tests/test_phase2_profiles.py`（本機 Docker Postgres 驗證，5 項全過）。merge 進 `main` 後另有 `9f00a00` fix: stabilize phase 2 profile memory 的穩定性修正。**仍未驗證的部分**：尚未在 Supabase 正式環境跑過這批 migration（`1ade07baedf2_*`）與對應 E2E 驗證。
+**完成判準**：模擬「上次講嗰個朋友」的對話，system 能撈到正確摘要並回應連貫。 ✅ 邏輯已實作並通過 `tests/test_phase2_profiles.py`（本機 Docker Postgres 驗證，5 項全過）。merge 進 `main` 後另有 `9f00a00` fix: stabilize phase 2 profile memory 的穩定性修正。**正式環境驗證（2026-10-02，Neon）**：migration 已在 head；profile 建立時正確記錄測試的年級值，`/chat/end` 回 `ended`，Neon 產生了 session summary。
 
 **Branch/Merge 狀態**：已透過 PR #2（`4b9b4af`）merge 進 `main`（2026-08-20），非「待 merge」。
 
@@ -91,7 +91,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 ---
 
-## Phase 3 — 範例庫（T-Q16–T-Q19）✅ 程式碼完成（2026-09-30，`upgrade/phase3`，尚未 merge）
+## Phase 3 — 範例庫（T-Q16–T-Q19）✅ 完成並已合併進 `main`（PR #3，2026-10-02，merge commit `764cf1e`）
 > 目標：獨立 CRUD + Selector，先用固定條件測試，不接 Rule Engine。
 > 設計依據：`docs/Phase3_Phase4_implement_plan_Antigravity.md`（實作前已修正 5 個問題，見該文件 §2/§3 的 RESOLVED 段落，`9ade99c`）。
 
@@ -102,7 +102,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - [x] 3.5 使用記錄寫入 `example_usage_log`（T-Q18）
 - [x] 3.6 引用模式（anonymous/attributed）接進最終回覆組裝（T-Q20，`app/routers/chat.py` 的 `ATTRIBUTION_TAG`）
 
-**完成判準**：治療師新增一則範例＋條件，符合條件的對話回覆風格明顯貼近範例。 ✅ 選取／注入／記錄／引用的邏輯已實作，`tests/test_phase3_examples.py` 在本機 Docker Postgres 全過（無 DB 時 19 項單元測試照跑，DB 整合測試 6 項）；全套 `pytest tests/` 201 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**仍未驗證的部分**：(1)「回覆風格明顯貼近範例」需要真的 Azure OpenAI 跑過才能主觀判斷，自動化測試 mock 了 LLM，只驗證範例有正確進入 prompt；(2) ~~merge 前必須先在正式環境跑 `5c3e9a1f7d20` migration~~ ✅ **2026-10-02 已完成**：正式環境資料庫已從 Supabase 換成 **Neon**，Neon 目前停在 `5c3e9a1f7d20`（head），與本地 `migrations/versions` 最新版本一致，merge 前置條件已滿足。正式環境上的 Admin API / 範例注入實際打一次仍待 merge 部署後驗證。
+**完成判準**：治療師新增一則範例＋條件，符合條件的對話回覆風格明顯貼近範例。 ✅ 選取／注入／記錄／引用的邏輯已實作，`tests/test_phase3_examples.py` 在本機 Docker Postgres 全過（無 DB 時 19 項單元測試照跑，DB 整合測試 6 項）；全套 `pytest tests/` 201 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**仍未驗證的部分**：(1)「回覆風格明顯貼近範例」需要真的 Azure OpenAI 跑過才能主觀判斷，自動化測試 mock 了 LLM，只驗證範例有正確進入 prompt；(2) ~~merge 前必須先在正式環境跑 `5c3e9a1f7d20` migration~~ ✅ **2026-10-02 已完成**：正式環境資料庫已從 Supabase 換成 **Neon**，Neon 目前停在 `5c3e9a1f7d20`（head），與本地 `migrations/versions` 最新版本一致，merge 前置條件已滿足。**正式環境驗證（merge 後）**：用唯一的測試專用主題建立暫時範例，`/chat` 回 200，Neon 的 `example_usage_log` 有記錄到對應的 assistant message。「回覆風格明顯貼近範例」仍屬主觀判斷，尚未由治療師評估。
 
 **實作筆記（與計畫文件的差異）**：
 - **`app/core/llm_client.py` 也要改**：計畫只列了 `chat.py` 和 `build_prompt()`，但 `chat.py` 是透過 `chat_with_llm()` 間接呼叫 `build_prompt()`，所以 `chat_with_llm()` 也加了 `examples` 參數往下傳。
@@ -196,7 +196,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**（2026-10-02 更新）：Phase 0、Phase 1、Phase 2 皆已完成並 merge 進 `main`（PR #1、PR #2）。**正式環境資料庫已從 Supabase 換成 Neon**（配套 hotfix：`hotfix/neon-bare-scheme`、`hotfix/missing-greenlet`，皆已 merge 進 `main`，並已 merge 進 `upgrade/phase3`），Neon schema 已在 head `5c3e9a1f7d20`，涵蓋 Phase 0–3 全部 migration。目前工作分支為 `upgrade/phase3`（範例庫），程式碼完成、本機 Docker Postgres 測試全過，正式環境 migration 已就位，**可以 push、開 PR、merge 進 `main`**。仍待補的正式環境驗證：Phase 1 persona 指派 API、Phase 2 profile/摘要流程、Phase 3 Admin API 與範例注入，各實際打一次。
+5. **目前狀態**（2026-10-05 更新）：Phase 0–3 皆已完成並 merge 進 `main`（PR #1–#3），正式環境資料庫為 Neon（schema 在 head `5c3e9a1f7d20`）。2026-10-02 Phase 3 merge 後，已在正式環境用合成測試使用者逐一驗證 `/chat`、Phase 1 persona 指派、Phase 2 profile／session summary、Phase 3 範例建立與使用記錄，Vercel 前後端部署皆成功。目前工作分支為 `upgrade/phase4`（Rule Engine），從 `764cf1e` 開出。
 
 ### ⚠️ 上線後的 Hotfix 記錄（Phase 0 資料庫連線層，2026-08-12）
 

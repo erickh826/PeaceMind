@@ -40,10 +40,11 @@ Phase 0 的 `InMemoryConversationStore` → `PostgresConversationStore` 上線�
 ## 目前進度速覽
 
 - ✅ **Phase 0**（資料庫地基）：完成，已上線驗證
-- ✅ **Phase 1**（Persona 系統）：完成並已 merge 進 `main`（PR #1，2026-08-19）；手動指派流程已在本機 Docker Postgres 跑過 E2E，schema 已在 Neon 正式環境就位，**persona 指派 API 尚未在正式環境實際打過**
-- ✅ **Phase 2**（Profile / 主題演化 / 跨 Session 摘要）：完成並已 merge 進 `main`（PR #2，2026-08-20，後續 `9f00a00` 穩定性修正）；migration 已套用到 Neon，**E2E 尚未在正式環境驗證**
-- 🔄 **Phase 3**（範例庫）：程式碼完成、本機 Docker Postgres 測試全過（`upgrade/phase3`），Neon 已 migrate 到 head `5c3e9a1f7d20`，**尚未 merge、正式環境 API 尚未實際打過**
-- ⬜ Phase 4–8：規劃在 `docs/CLINICAL_FRAMEWORK_TASKS.md`，還沒開始
+- ✅ **Phase 1**（Persona 系統）：完成並已 merge 進 `main`（PR #1，2026-08-19），2026-10-02 已在 Neon 正式環境驗證
+- ✅ **Phase 2**（Profile / 主題演化 / 跨 Session 摘要）：完成並已 merge 進 `main`（PR #2，2026-08-20），2026-10-02 已在 Neon 正式環境驗證
+- ✅ **Phase 3**（範例庫）：完成並已 merge 進 `main`（PR #3，2026-10-02），已在 Neon 正式環境驗證
+- 🔄 **Phase 4**（Rule Engine）：`upgrade/phase4`，規劃修正中
+- ⬜ Phase 5–8：規劃在 `docs/CLINICAL_FRAMEWORK_TASKS.md`，還沒開始
 
 詳細狀態、每個 checkbox 的完成情況，去看 `docs/CLINICAL_FRAMEWORK_TASKS.md` 最新版本，這份 `CLAUDE.md` 不會逐項同步更新（避免兩份文件互相打架），有衝突以 `CLINICAL_FRAMEWORK_TASKS.md` 為準。
 
