@@ -340,11 +340,19 @@ CREATE TABLE response_examples (
 -- T-Q18: 有效性追蹤
 CREATE TABLE example_usage_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    example_id      UUID NOT NULL REFERENCES response_examples(id),
-    message_id      UUID NOT NULL REFERENCES messages(id),
+    example_id      UUID NOT NULL REFERENCES response_examples(id) ON DELETE CASCADE,
+    message_id      UUID REFERENCES messages(id) ON DELETE SET NULL,   -- 見下方註記：不可 NOT NULL + CASCADE
+    session_id      UUID REFERENCES sessions(id) ON DELETE SET NULL,
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     used_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     effectiveness_feedback TEXT  -- 之後可連結 feedback_tags 或使用者反應
 );
+-- message_id 刻意可為 NULL + ON DELETE SET NULL，不是原設計的 NOT NULL + 隱含 CASCADE：
+-- PostgresConversationStore.reset()（/api/v1/reset）會直接刪除整個 session，messages 連帶
+-- CASCADE 刪除。若 message_id 是 NOT NULL 但沒設 ondelete，/reset 會直接因外鍵限制失敗；
+-- 若寫成 CASCADE，使用記錄會跟著使用者按「新對話」而消失，T-Q18 的有效性追蹤永遠留不住
+-- 任何東西——跟 Phase 2 的 session_summaries 是同一類坑（見上方 §2.1 註記），改成 SET NULL
+-- 並額外記下 session_id / user_id，讓記錄在 message 被刪除後仍可回溯是哪個使用者。
 ```
 
 ---

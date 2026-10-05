@@ -24,6 +24,7 @@ def chat_with_llm(
     persona_fragment: str | None = None,
     profile_text: str | None = None,
     past_summaries_text: str | None = None,
+    examples: list[dict] | None = None,
 ) -> str:
     """
     呼叫 Azure OpenAI，使用三明治結構 Prompt。
@@ -37,6 +38,7 @@ def chat_with_llm(
         persona_fragment: 目前使用的 persona 人格描述片段；不傳則使用預設「Boon」內容
         profile_text: Phase 2 Context Assembly Service 組好的學生 Profile 文字區塊
         past_summaries_text: Phase 2 Context Assembly Service 組好的跨 session 摘要文字區塊
+        examples: Phase 3 Example Selector 命中的範例（{"usage_mode", "content"}），可為 None
     """
     client = get_azure_client()
     deployment = os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"]
@@ -48,6 +50,7 @@ def chat_with_llm(
         "persona_name": persona_name,
         "profile_text": profile_text,
         "past_summaries_text": past_summaries_text,
+        "examples": examples,
     }
     if persona_fragment is not None:
         prompt_kwargs["persona_fragment"] = persona_fragment

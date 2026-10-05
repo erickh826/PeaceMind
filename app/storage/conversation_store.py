@@ -15,7 +15,8 @@ class ConversationStore(Protocol):
 
     async def append(
         self, session_id: str, role: str, content: str, persona_id: str | None = None
-    ) -> None:
+    ) -> str | None:
+        """寫入一則訊息，回傳新 message 的 id（沒有結構化 id 的實作、或訊息被略過時回傳 None）。"""
         ...
 
     async def reset(self, session_id: str) -> None:
