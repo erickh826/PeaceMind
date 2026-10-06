@@ -43,7 +43,7 @@ Phase 0 的 `InMemoryConversationStore` → `PostgresConversationStore` 上線�
 - ✅ **Phase 1**（Persona 系統）：完成並已 merge 進 `main`（PR #1，2026-08-19），2026-10-02 已在 Neon 正式環境驗證
 - ✅ **Phase 2**（Profile / 主題演化 / 跨 Session 摘要）：完成並已 merge 進 `main`（PR #2，2026-08-20），2026-10-02 已在 Neon 正式環境驗證
 - ✅ **Phase 3**（範例庫）：完成並已 merge 進 `main`（PR #3，2026-10-02），已在 Neon 正式環境驗證
-- 🔄 **Phase 4**（Rule Engine）：`upgrade/phase4`，規劃修正中
+- 🔄 **Phase 4**（Rule Engine）：程式碼完成、本機 Docker Postgres 測試全過（`upgrade/phase4`），**尚未 merge；merge 前必須先在 Neon 跑 migration、在 Vercel 設定 `ADMIN_API_KEY`**
 - ⬜ Phase 5–8：規劃在 `docs/CLINICAL_FRAMEWORK_TASKS.md`，還沒開始
 
 詳細狀態、每個 checkbox 的完成情況，去看 `docs/CLINICAL_FRAMEWORK_TASKS.md` 最新版本，這份 `CLAUDE.md` 不會逐項同步更新（避免兩份文件互相打架），有衝突以 `CLINICAL_FRAMEWORK_TASKS.md` 為準。
@@ -52,4 +52,5 @@ Phase 0 的 `InMemoryConversationStore` → `PostgresConversationStore` 上線�
 
 - 每個 Phase/hotfix 完成後跑 `pytest tests/ -v` 確認沒有 regression。目前有 5 個 `test_phase5.py` 的測試因為缺 `pytest-asyncio` 套件一直是失敗的——這是既有問題，不是你造成的，看到這 5 個失敗不用緊張，除非你剛好有空想順手修掉它。
 - Migration 一律用 Alembic，不要手動改 schema。
+- Phase 4 起所有 admin 寫入端點都要求 `X-Admin-Key` header 等於 `ADMIN_API_KEY`（`app/core/admin_auth.py`），未設定時 fail closed；測試要自己設定這個值。
 - 三明治 Prompt 結構（`app/prompts/system_prompt.py`）的 `SAFETY_CORE`（絕對禁止事項 + 危機熱線）永遠固定，不管做什麼 persona/rule engine 功能，都不能讓這段被 persona 內容覆寫或稀釋掉。

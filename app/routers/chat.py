@@ -30,6 +30,7 @@ from app.core.crisis_handler import get_crisis_response
 from app.core.persona_resolver import resolve_persona, record_persona_usage
 from app.core.context_assembler import assemble_context
 from app.core.example_selector import log_example_usage, select_applicable_examples
+from app.core.rule_engine import resolve_rule
 from app.core.profile_service import process_post_chat_updates
 from app.core.session_summarizer import end_session_and_summarize
 from app.storage import conversation_store
@@ -148,9 +149,15 @@ async def chat(request: ChatRequest):
             mt_result.cumulative_score,
         )
 
-    # ── Persona Resolver（Phase 1 + Phase 2 自動匹配）──────────────────────
-    # 優先序：治療師手動指派 → persona_match_conditions 自動匹配 → 系統預設 persona
-    persona = await resolve_persona(user_client_key=session_id)
+    # ── Rule Engine（Phase 4）────────────────────────────────────────────────
+    # 先建立 session：規則版本依 sessions.started_at 選擇，原本 session 要到回覆後
+    # append() 才建立，首輪沒有時間基準。安全閘門提早 return 的路徑不會走到這裡。
+    session_started_at = await conversation_store.ensure_session(session_id) if session_id else None
+    applied_rule = await resolve_rule(session_id, session_started_at)
+
+    # ── Persona Resolver（Phase 1 + Phase 2 自動匹配 + Phase 4 規則）─────────
+    # 優先序：治療師手動指派 → 命中規則的 persona → persona_match_conditions 自動匹配 → 系統預設
+    persona = await resolve_persona(user_client_key=session_id, rule_persona_id=applied_rule.persona_id)
     if session_id:
         await record_persona_usage(session_id, persona)
 
@@ -159,8 +166,10 @@ async def chat(request: ChatRequest):
     context = await assemble_context(session_id, user_message)
 
     # ── Example Selector（Phase 3）───────────────────────────────────────────
-    # 依 profile + 已演化主題挑出命中的治療師範例（最多 EXAMPLE_MATCH_LIMIT 則）
-    example_selection = await select_applicable_examples(session_id)
+    # 規則指定的範例優先，再依 profile + 已演化主題自動匹配補足（總共最多 EXAMPLE_MATCH_LIMIT 則）
+    example_selection = await select_applicable_examples(
+        session_id, pinned_example_ids=applied_rule.example_ids
+    )
 
     # ── Layer 2: LLM Core（Azure OpenAI + Sandwich Prompt）──────────────────
     try:
@@ -173,6 +182,7 @@ async def chat(request: ChatRequest):
             profile_text=context.profile_text,
             past_summaries_text=context.past_summaries_text,
             examples=[ex.to_prompt_dict() for ex in example_selection.examples],
+            strategy=applied_rule.strategy,
         )
     except Exception as e:
         logger.error("LLM call failed: %s", str(e))
@@ -198,8 +208,12 @@ async def chat(request: ChatRequest):
     # ── Memory 寫入 ──────────────────────────────────────────────────────────
     if session_id:
         await conversation_store.append(session_id, "user", user_message, persona_id=persona.id)
+        # 規則紀錄只寫在 assistant message 上；L3 替換回覆時規則仍用於生成，
+        # 但標記 output_replaced，統計規則成效時排除
         assistant_message_id = await conversation_store.append(
-            session_id, "assistant", final_reply, persona_id=persona.id
+            session_id, "assistant", final_reply, persona_id=persona.id,
+            rule_id=applied_rule.rule_id, rule_version_id=applied_rule.rule_version_id,
+            output_replaced=intercepted,
         )
 
         # ── 範例使用記錄（Phase 3，T-Q18）──────────────────────────────────

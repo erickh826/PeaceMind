@@ -18,6 +18,7 @@ PostgresConversationStore（Phase 0）
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -25,6 +26,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.db.models import ConversationSession, Message, User
+
+# messages 對 personas / rules / rule_versions 有 FK：確保這些 table 已註冊進
+# Base.metadata，flush 時才解析得到外鍵（不依賴呼叫端剛好先 import 過）
+from app.db import models_persona, models_rule  # noqa: F401
 from app.storage.conversation_store import ConversationStore
 
 
@@ -79,8 +84,27 @@ class PostgresConversationStore(ConversationStore):
             messages = list(reversed(msg_result.scalars().all()))
             return [{"role": m.role, "content": m.content} for m in messages]
 
+    async def ensure_session(self, session_id: str) -> datetime:
+        """
+        Phase 4：在 Rule Engine 之前先建立 session，讓首輪也有 started_at 可以選規則版本
+        （原本 session 要到回覆後 append() 才建立）。
+        """
+        async with get_session() as db:
+            session_row = await self._get_or_create_session(db, session_id)
+            await db.commit()
+            if "started_at" not in session_row.__dict__:
+                await db.refresh(session_row, ["started_at"])  # 新建列的 server default
+            return session_row.started_at
+
     async def append(
-        self, session_id: str, role: str, content: str, persona_id: str | None = None
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        persona_id: str | None = None,
+        rule_id: str | None = None,
+        rule_version_id: str | None = None,
+        output_replaced: bool = False,
     ) -> str | None:
         if role not in ("user", "assistant"):
             return None
@@ -96,6 +120,9 @@ class PostgresConversationStore(ConversationStore):
                 role=role,
                 content=text,
                 persona_id=uuid.UUID(persona_id) if persona_id else None,
+                rule_id=uuid.UUID(rule_id) if rule_id else None,
+                rule_version_id=uuid.UUID(rule_version_id) if rule_version_id else None,
+                output_replaced=output_replaced,
             )
             db.add(message)
             await db.flush()  # 取得 message.id，供 Phase 3 example_usage_log 記錄是哪一則回覆

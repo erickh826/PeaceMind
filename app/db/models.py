@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, Text, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, ForeignKey, Text, UniqueConstraint, false, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -71,11 +71,19 @@ class Message(Base):
     )
     role: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    # persona_id：Phase 1 起有 FK 指向 personas.id；rule_id 待 Phase 4 補上
+    # persona_id：Phase 1 起有 FK 指向 personas.id
     persona_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("personas.id"), nullable=True
     )
-    rule_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # Phase 4：該則回覆命中的規則與實際使用的版本（只寫在 assistant message 上）
+    rule_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("rules.id", ondelete="SET NULL"), nullable=True
+    )
+    rule_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("rule_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    # L3 Output Gateway 替換了回覆：規則仍用於生成，但統計規則成效時要排除
+    output_replaced: Mapped[bool] = mapped_column(nullable=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")

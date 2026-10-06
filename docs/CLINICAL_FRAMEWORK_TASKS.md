@@ -119,15 +119,15 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 ---
 
-## Phase 4 — Rule Engine（T-Q1–T-Q5）
+## Phase 4 — Rule Engine（T-Q1–T-Q5）✅ 程式碼完成（2026-10-06，`upgrade/phase4`，尚未 merge）
 > 目標：規則統一調度 Persona + Example + 療法/語氣設定。
 
-- [ ] 4.1 Migration：`rules`, `rule_versions`；`messages.rule_id` 補 FK、新增 `messages.rule_version_id`、`messages.output_replaced`
-- [ ] 4.2 條件比對引擎（Python，比對 `conditions_json` vs profile/topics/risk）
-- [ ] 4.3 CRUD API + 每次變更寫 `rule_versions`（T-Q8 先做基礎版本，Phase 5 補審核流程）
-- [ ] 4.4 優先級排序、多規則衝突取最高優先（T-Q4）
-- [ ] 4.5 `scope` 生效範圍邏輯：new_conversations_only vs immediate（T-Q5）
-- [ ] 4.6 Rule action 接進 Context Assembly：覆寫 persona / 帶入 example_ids / 設定 therapy+tone
+- [x] 4.1 Migration：`rules`, `rule_versions`；`messages.rule_id` 補 FK、新增 `messages.rule_version_id`、`messages.output_replaced`
+- [x] 4.2 條件比對引擎（Python，比對 `conditions_json` vs profile/topics/risk）
+- [x] 4.3 CRUD API + 每次變更寫 `rule_versions`（T-Q8 先做基礎版本，Phase 5 補審核流程）
+- [x] 4.4 優先級排序、多規則衝突取最高優先（T-Q4）
+- [x] 4.5 `scope` 生效範圍邏輯：new_conversations_only vs immediate（T-Q5）
+- [x] 4.6 Rule action 接進 Context Assembly：覆寫 persona / 帶入 example_ids / 設定 therapy+tone
 
 **完成判準**：新增一條規則（焦慮 + low risk + 第 3 次），命中時可觀察到 ACT 語氣、溫暖接納風格的回覆。實際寫法為 `{"topics_include": ["Anxiety"], "risk_level": "low", "min_topic_mentions": 3}`。原文件範例是「社交焦慮」，但主題只能用 `STANDARD_CLINICAL_TOPICS` 裡的英文名稱，`Anxiety` 比社交焦慮廣，所以判準直接稱為「焦慮」，不宣稱能區分社交焦慮。
 
@@ -165,6 +165,17 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 **Merge 前的硬性前置條件**（比 Phase 3 更嚴格）：
 - **先在 Neon 跑 Phase 4 migration**：Phase 4 在 `messages` 加了欄位，ORM 每次 INSERT 都會帶上這些欄位；程式碼若比 migration 先上 Vercel，所有會寫 messages 的 `/chat` 都會 500，fail-open 救不了。新欄位預計都是 nullable 或有預設值，但這只是設計意圖、**不等於已驗證**：migration 寫好後，要在本機 Docker Postgres 套用 Phase 4 migration，再用 `main` 的程式碼（不含 Phase 4）跑 `pytest tests/` 並實際打 `/chat`，確認舊版程式在新 schema 上正常，才能先套用到 Neon。
 - **在 Vercel 設定 `ADMIN_API_KEY`**：否則 fail-closed 的寫入端點會讓正式環境無法建立任何規則，既有的 persona／範例／指派寫入也會一起失效。
+
+**實作狀態（2026-10-06）**：4.1–4.6 已實作，`tests/test_phase4_rules.py` 在本機 Docker Postgres 全過（無 DB 時 29 項單元測試照跑，DB 整合測試 6 項，含 v1 active → v2 archived → v3 的端到端案例）；全套 `pytest tests/` 236 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**Migration 相容舊版程式已驗證**：本機套用 `6d55b7146dcc` 後，用尚未包含 Phase 4 的程式碼跑 `pytest tests/`（201 passed）、`test_phase1_e2e.py`，並實際打一次 `/chat`（真的 Azure OpenAI，HTTP 200，兩則 message 正常寫入、`output_replaced` 預設 false），驗證後已刪除測試資料。**仍未驗證的部分**：(1)「命中時可觀察到 ACT 語氣、溫暖接納風格」需要真的 Azure OpenAI 由人判斷，自動化測試 mock 了 LLM，只驗證策略正確進入 prompt；(2) 尚未在 Neon 套用 migration、尚未設定 Vercel `ADMIN_API_KEY`（見上方硬性前置條件）。
+
+**實作筆記（與計畫的差異與補充）**：
+- `ensure_session()` 也會順便建立匿名 user，所以首輪起 Example Selector 就查得到 user（profile 是空的，不會命中任何範例，行為不變）。LLM 呼叫失敗（503）時會留下沒有 message 的 session 列，不影響後續對話。
+- `persona_switch_log` 的第一筆（`None → persona`）從第 2 輪提前到第 1 輪：session 現在首輪就存在，`record_persona_usage()` 不再因找不到 session 而略過。筆數不變，只是時間點提早。
+- 每輪多了 `ensure_session()` 一次寫入，以及 Rule Engine 對 users / rules / rule_versions / profile / topics 的查詢（第四次獨立查 users，跟 Phase 2/3 記錄的已知取捨同類）。Rule Engine 先略過目前狀態為 `archived` 的規則（最新版本必為封存快照、必定停用），`draft` 不能略過（舊 session 可能仍適用更早的 active 版本）。
+- Admin API：`GET /rules`、`GET /rules/{id}/versions`（讀取不需要 key）；`POST /rules`、`PATCH /rules/{id}`（需要 key）。`PATCH` 用 `SELECT … FOR UPDATE` 鎖住規則，避免並行修改撞 `version_number`；驗證失敗的修改不會留下版本。`in_review` 保留給 Phase 5，API 不接受；回滾（5.4）尚未提供，但快照已完整。
+- 引用驗證：persona / 範例必須存在；結果狀態是 `active` 時還必須都是 active。因此 active 規則引用的範例被封存後，再修改這條規則（例如調 priority）會被 422 擋下，要先移除該範例或改成 draft。
+- `validate_condition_json()` 加了 `mode` 參數；`admin_examples.py` 原本直接把它當 pydantic validator 傳入，pydantic 會把第二個參數誤當成 `ValidationInfo`，所以改成明確的 classmethod 包一層。
+- `test_phase1_e2e.py` 呼叫指派 API 時改帶 `X-Admin-Key`（未設定 `ADMIN_API_KEY` 時用測試專用值）；`tests/test_phase3_examples.py` 同樣補 key，並讓假的 Example Selector 接受新的 `pinned_example_ids` 參數。
 
 ---
 
@@ -231,7 +242,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**（2026-10-05 更新）：Phase 0–3 皆已完成並 merge 進 `main`（PR #1–#3），正式環境資料庫為 Neon（schema 在 head `5c3e9a1f7d20`）。2026-10-02 Phase 3 merge 後，已在正式環境用合成測試使用者逐一驗證 `/chat`、Phase 1 persona 指派、Phase 2 profile／session summary、Phase 3 範例建立與使用記錄，Vercel 前後端部署皆成功。目前工作分支為 `upgrade/phase4`（Rule Engine），從 `764cf1e` 開出。
+5. **目前狀態**（2026-10-06 更新）：Phase 0–3 皆已完成並 merge 進 `main`（PR #1–#3），並已在 Neon 正式環境驗證。目前工作分支為 `upgrade/phase4`（Rule Engine），4.1–4.6 程式碼完成、本機 Docker Postgres 測試全過，尚未 push、尚未 merge。**merge 前必須先在 Neon 套用 `6d55b7146dcc`，並在 Vercel 設定 `ADMIN_API_KEY`**（見 Phase 4 硬性前置條件）。
 
 ### ⚠️ 上線後的 Hotfix 記錄（Phase 0 資料庫連線層，2026-08-12）
 
