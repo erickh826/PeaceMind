@@ -150,10 +150,12 @@ async def chat(request: ChatRequest):
         )
 
     # ── Rule Engine（Phase 4）────────────────────────────────────────────────
-    # 先建立 session：規則版本依 sessions.started_at 選擇，原本 session 要到回覆後
-    # append() 才建立，首輪沒有時間基準。安全閘門提早 return 的路徑不會走到這裡。
-    session_started_at = await conversation_store.ensure_session(session_id) if session_id else None
-    applied_rule = await resolve_rule(session_id, session_started_at)
+    # 先建立 session：規則版本依建立 session 當下的資料庫快照判定（見 rule_engine.py），
+    # 原本 session 要到回覆後 append() 才建立，首輪沒有判定基準。安全閘門提早 return
+    # 的路徑不會走到這裡。
+    if session_id:
+        await conversation_store.ensure_session(session_id)
+    applied_rule = await resolve_rule(session_id)
 
     # ── Persona Resolver（Phase 1 + Phase 2 自動匹配 + Phase 4 規則）─────────
     # 優先序：治療師手動指派 → 命中規則的 persona → persona_match_conditions 自動匹配 → 系統預設

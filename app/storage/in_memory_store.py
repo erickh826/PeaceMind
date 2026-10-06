@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime
 from threading import RLock
 
 from app.storage.conversation_store import ConversationStore
@@ -23,8 +22,8 @@ class InMemoryConversationStore(ConversationStore):
             history = self._sessions.get(session_id, [])
             return [msg.copy() for msg in history]
 
-    async def ensure_session(self, session_id: str) -> datetime | None:
-        # 沒有結構化 session（也沒有 DB，Rule Engine 不會啟用），不需要時間基準
+    async def ensure_session(self, session_id: str) -> None:
+        # 沒有結構化 session（也沒有 DB，Rule Engine 不會啟用），不需要判定基準
         return None
 
     async def append(

@@ -301,8 +301,13 @@ async def update_rule(rule_id: str, request: RuleUpdateRequest):
         raise HTTPException(status_code=422, detail="沒有任何要修改的欄位")
 
     async with get_session() as db:
-        # FOR UPDATE：同一條規則的並行修改排隊進行，version_number 才不會撞號
-        rule = await db.scalar(select(Rule).where(Rule.id == rule_uuid).with_for_update())
+        # FOR NO KEY UPDATE：同一條規則的並行修改排隊進行，version_number 才不會撞號。
+        # 不用 FOR UPDATE：它會擋住 messages.rule_id 外鍵檢查要拿的 KEY SHARE 鎖，
+        # 管理者修改規則的期間，命中這條規則的 /chat 寫入 message 時都得等它 commit。
+        # 這裡不會改規則的 id，NO KEY UPDATE 就足以讓修改彼此排隊。
+        rule = await db.scalar(
+            select(Rule).where(Rule.id == rule_uuid).with_for_update(key_share=True)
+        )
         if rule is None:
             raise HTTPException(status_code=404, detail="規則不存在")
         changed_by = await _require_therapist(db, request.changed_by, "changed_by")

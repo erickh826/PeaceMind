@@ -18,7 +18,6 @@ PostgresConversationStore（Phase 0）
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -84,17 +83,15 @@ class PostgresConversationStore(ConversationStore):
             messages = list(reversed(msg_result.scalars().all()))
             return [{"role": m.role, "content": m.content} for m in messages]
 
-    async def ensure_session(self, session_id: str) -> datetime:
+    async def ensure_session(self, session_id: str) -> None:
         """
-        Phase 4：在 Rule Engine 之前先建立 session，讓首輪也有 started_at 可以選規則版本
-        （原本 session 要到回覆後 append() 才建立）。
+        Phase 4：在 Rule Engine 之前先建立 session。新建的列由 server default 記下當下的
+        資料庫快照（sessions.rule_snapshot），Rule Engine 用它判定規則版本是否在 session
+        開始前就存在（原本 session 要到回覆後 append() 才建立，首輪沒有判定基準）。
         """
         async with get_session() as db:
-            session_row = await self._get_or_create_session(db, session_id)
+            await self._get_or_create_session(db, session_id)
             await db.commit()
-            if "started_at" not in session_row.__dict__:
-                await db.refresh(session_row, ["started_at"])  # 新建列的 server default
-            return session_row.started_at
 
     async def append(
         self,

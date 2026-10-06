@@ -124,44 +124,42 @@ def test_rule_matching_threshold_defaults_and_does_not_sum_topics():
 T0 = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 
 
-def _v(number: int, minutes: int, status: str = "active", scope: str = "new_conversations_only") -> VersionRow:
+def _v(number: int, existed: bool, status: str = "active", scope: str = "new_conversations_only") -> VersionRow:
+    """existed：session 開始時這個版本是否已經 commit（實際由資料庫快照判定）。"""
     return VersionRow(
-        id=f"v{number}", version_number=number, created_at=T0 + timedelta(minutes=minutes),
+        id=f"v{number}", version_number=number, existed_at_session_start=existed,
         snapshot={"status": status, "scope": scope, "priority": 0, "conditions_json": {}, "action_json": {}},
     )
 
 
 def test_archive_then_reactivate_keeps_old_sessions_disabled():
-    versions = [_v(1, 0), _v(2, 10, status="archived"), _v(3, 20)]
-    old_session = T0 + timedelta(minutes=5)  # v1 之後、v2 之前開始
-    chosen = applicable_version(versions, old_session)
+    # v1 之後、v2 之前開始的 session
+    old_session = [_v(1, True), _v(2, False, status="archived"), _v(3, False)]
+    chosen = applicable_version(old_session)
     assert chosen.id == "v2" and chosen.snapshot["status"] == "archived"  # 停用，不會退回 v1
-    assert applicable_version(versions, T0 + timedelta(minutes=25)).id == "v3"  # 新 session 用 v3
+    # v3 之後開始的新 session 用 v3
+    assert applicable_version([_v(1, True), _v(2, True, status="archived"), _v(3, True)]).id == "v3"
     # v2 與 v3 之間開始的 session：v3 是 new_conversations_only，仍停用
-    assert applicable_version(versions, T0 + timedelta(minutes=15)).id == "v2"
+    assert applicable_version([_v(1, True), _v(2, True, status="archived"), _v(3, False)]).id == "v2"
 
 
 def test_mixed_scope_history_picks_newest_eligible_version():
-    session_start = T0 + timedelta(minutes=5)
-    versions = [_v(1, 0), _v(2, 10, status="draft", scope="immediate"), _v(3, 20)]
+    versions = [_v(1, True), _v(2, False, status="draft", scope="immediate"), _v(3, False)]
     # v2 立即生效（停用），v3 是 session 開始後的 new_conversations_only，不適用
-    assert applicable_version(versions, session_start).id == "v2"
-    assert applicable_version(versions[:1] + [_v(2, 10, scope="immediate")], session_start).id == "v2"
+    assert applicable_version(versions).id == "v2"
+    assert applicable_version([_v(1, True), _v(2, False, scope="immediate")]).id == "v2"
     # session 開始前規則不存在、之後才以 new_conversations_only 建立：不套用
-    assert applicable_version([_v(1, 10)], session_start) is None
-    # 沒有時間基準時用最新一版
-    assert applicable_version(versions, None).id == "v3"
+    assert applicable_version([_v(1, False)]) is None
 
 
-def test_latest_is_decided_by_version_number_not_timestamp():
-    same_time = [_v(2, 0), _v(1, 0), _v(3, 0, status="archived")]
-    assert applicable_version(same_time, T0).id == "v3"
+def test_latest_is_decided_by_version_number_not_list_order():
+    assert applicable_version([_v(2, True), _v(1, True), _v(3, True, status="archived")]).id == "v3"
 
 
 def test_pick_rule_prefers_priority_then_newer_rule_then_id():
     def candidate(rule_id, priority, minutes):
         version = VersionRow(
-            id=f"{rule_id}-v1", version_number=1, created_at=T0,
+            id=f"{rule_id}-v1", version_number=1, existed_at_session_start=True,
             snapshot={"status": "active", "priority": priority},
         )
         return Candidate(rule_id=rule_id, rule_created_at=T0 + timedelta(minutes=minutes), version=version)
@@ -234,7 +232,7 @@ def test_rule_engine_fails_open(monkeypatch):
 
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://unused")
     monkeypatch.setattr(rule_engine, "_resolve", broken)
-    assert asyncio.run(rule_engine.resolve_rule("any-session", None)) == NO_RULE
+    assert asyncio.run(rule_engine.resolve_rule("any-session")) == NO_RULE
 
 
 def test_chat_passes_rule_to_persona_examples_and_prompt(monkeypatch):
@@ -246,7 +244,7 @@ def test_chat_passes_rule_to_persona_examples_and_prompt(monkeypatch):
     )
     seen: dict = {}
 
-    async def fake_resolve_rule(session_id, started_at):
+    async def fake_resolve_rule(session_id):
         return rule
 
     async def fake_resolve_persona(user_client_key=None, rule_persona_id=None):
@@ -621,3 +619,62 @@ def test_rule_examples_come_first_then_auto_matches_fill(monkeypatch):
         assert [e["content"] for e in captured[-1]["examples"]] == ["pinned-1", "auto"]
     finally:
         _run(_cleanup(session_ids=[session_id], rule_ids=rule_ids, example_ids=example_ids))
+
+
+@requires_db
+def test_update_committed_after_session_start_is_not_applied_to_that_session(monkeypatch):
+    """
+    並行更新：v2 的 transaction 在 session 開始前就開始（例如等待 row lock），在
+    session 開始後才 commit。v2 是 new_conversations_only，這個 session 必須維持 v1。
+    用時間戳判定時，v2 的 created_at（transaction 開始時間）早於 session，會被誤用。
+    """
+    import psycopg
+
+    captured = _patch_llm_and_hooks(monkeypatch)
+    client = _client()
+    session_id = _new_session_id("race")
+    later_session_id = _new_session_id("race-later")
+    rule_ids: list[str] = []
+    try:
+        rule = _create_rule(client, {"tone": "v1"})  # new_conversations_only
+        rule_ids.append(rule["id"])
+
+        # 另一個連線開始寫 v2，但先不 commit
+        sync_url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://")
+        with psycopg.connect(sync_url) as writer:
+            with writer.cursor() as cur:
+                # 跟 PATCH /rules 一樣拿 FOR NO KEY UPDATE（不擋 messages.rule_id 的外鍵檢查）
+                cur.execute("SELECT id FROM rules WHERE id = %s FOR NO KEY UPDATE", (rule["id"],))
+                snapshot = {
+                    "name": rule["name"], "conditions_json": ACT_RULE_CONDITIONS,
+                    "action_json": {"tone": "v2"}, "priority": 0,
+                    "scope": "new_conversations_only", "status": "active",
+                }
+                cur.execute(
+                    "UPDATE rules SET action_json = %s::jsonb, updated_at = now() WHERE id = %s",
+                    (psycopg.types.json.Json({"tone": "v2"}), rule["id"]),
+                )
+                cur.execute(
+                    "INSERT INTO rule_versions (rule_id, version_number, snapshot_json, changed_by) "
+                    "VALUES (%s, 2, %s::jsonb, '00000000-0000-0000-0000-000000000001')",
+                    (rule["id"], psycopg.types.json.Json(snapshot)),
+                )
+
+                # v2 尚未 commit 時開始新 session，首輪只看得到 v1
+                _chat(client, session_id, "哈囉")
+                _run(_seed_profile(session_id, {"Anxiety": 3}, risk_level="low"))
+                _chat(client, session_id)
+                assert captured[-1]["strategy"]["tone"] == "v1"
+
+            writer.commit()
+
+        # v2 commit 後，這個 session 仍維持 v1；之後開始的 session 才用 v2
+        _chat(client, session_id)
+        assert captured[-1]["strategy"]["tone"] == "v1"
+
+        _chat(client, later_session_id, "哈囉")
+        _run(_seed_profile(later_session_id, {"Anxiety": 3}, risk_level="low"))
+        _chat(client, later_session_id)
+        assert captured[-1]["strategy"]["tone"] == "v2"
+    finally:
+        _run(_cleanup(session_ids=[session_id, later_session_id], rule_ids=rule_ids))

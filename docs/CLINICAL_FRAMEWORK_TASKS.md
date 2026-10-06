@@ -122,7 +122,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 ## Phase 4 — Rule Engine（T-Q1–T-Q5）✅ 程式碼完成（2026-10-06，`upgrade/phase4`，尚未 merge）
 > 目標：規則統一調度 Persona + Example + 療法/語氣設定。
 
-- [x] 4.1 Migration：`rules`, `rule_versions`；`messages.rule_id` 補 FK、新增 `messages.rule_version_id`、`messages.output_replaced`
+- [x] 4.1 Migration：`rules`, `rule_versions`；`messages.rule_id` 補 FK、新增 `messages.rule_version_id`、`messages.output_replaced`；版本判定用的 `rule_versions.created_xact`、`sessions.rule_snapshot`
 - [x] 4.2 條件比對引擎（Python，比對 `conditions_json` vs profile/topics/risk）
 - [x] 4.3 CRUD API + 每次變更寫 `rule_versions`（T-Q8 先做基礎版本，Phase 5 補審核流程）
 - [x] 4.4 優先級排序、多規則衝突取最高優先（T-Q4）
@@ -144,15 +144,16 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 3. **Persona 優先序**：治療師手動指派 > 命中規則的 `persona_id` > `persona_match_conditions` 自動匹配 > 預設。手動指派只鎖住 persona；規則的 `therapy` / `tone` 對手動指派的學生仍然生效。
 4. **Therapy / tone 注入**：獨立的「本輪策略」prompt 區塊，放在 `context_blocks`（`SAFETY_CORE` 之前），不改寫 persona 片段；`SAFETY_CORE` 與三層安全閘門維持最高優先。
 5. **版本與 `scope`**：每次變更（建立、修改、啟用、封存、回滾）在**同一筆 transaction** 更新 `rules` 並寫一筆 `rule_versions` 快照；`scope` 與 `status` 都是快照的一部分。
-   - **先選版本，再看狀態**：適用版本 = 符合下列任一條件、同一條規則中 `version_number` 最大的一筆版本（「最新」一律依 `version_number` 判斷，不用 `created_at` 排序，避免時間相同時結果不確定；`created_at` 只用來跟 `sessions.started_at` 比較）——快照 `status = archived`（封存視為立即生效的停用版本，不論快照的 `scope`）、快照 `scope = immediate`、或 `created_at <= sessions.started_at`。選出後**該版本的** `status` 是 `active` 才套用；找不到適用版本也不套用。**不能先篩選 active 再選版本**，否則會跳過停用版本、重新選中更舊的 active 版本。
+   - **先選版本，再看狀態**：適用版本 = 符合下列任一條件、同一條規則中 `version_number` 最大的一筆版本（「最新」一律依 `version_number` 判斷）——快照 `status = archived`（封存視為立即生效的停用版本，不論快照的 `scope`）、快照 `scope = immediate`、或該版本在 session 開始時已經存在（見下方「版本是否已存在」）。選出後**該版本的** `status` 是 `active` 才套用；找不到適用版本也不套用。**不能先篩選 active 再選版本**，否則會跳過停用版本、重新選中更舊的 active 版本。
    - 必測案例：v1 active → v2 archived → v3 active（`new_conversations_only`）：在 v2 之前開始的舊 session 維持停用（選中 v2），v3 之後的新 session 用 v3。另測一般混合 scope 歷史。
    - 改回 `draft` 等非 active 狀態跟其他修改一樣依該版本的 `scope` 生效。
-   - **首輪也要有時間基準**：目前 `get_history()` 找不到 session 時回空清單，session 要到回覆後 `append()` 才建立，首輪沒有 `started_at`。`ConversationStore` 新增 `ensure_session()`（Postgres 版 get-or-create 並回傳 `started_at`，InMemory 版回傳 `None`），`/chat` 通過 L1 安全檢查後、Rule Engine 之前先呼叫。
+   - **首輪也要有判定基準**：目前 `get_history()` 找不到 session 時回空清單，session 要到回覆後 `append()` 才建立。`ConversationStore` 新增 `ensure_session()`（Postgres 版 get-or-create，快照由 server default 記下；InMemory 版不做事），`/chat` 通過 L1 安全檢查後、Rule Engine 之前先呼叫，快照才會早於首輪查詢，首輪與之後各輪判定一致。
    - `new_conversations_only`：進行中的 session 沿用 session 開始時的版本，新 session 用新版；session 開始後才建立的規則不套用到該 session。
    - `immediate`：進行中的 session 下一輪就用新版，不影響正在生成的回覆。
    - 固定的是規則版本，不是命中結果：每輪仍依當下 profile 重新比對。
    - **封存一律立即停用**，不論 `scope`。
-   - 適用版本由 `sessions.started_at` 與 `rule_versions.created_at` 推導、並記在每則回覆的 `messages.rule_version_id`，不另建 session 鎖定表（2026-10-05 使用者確認）。Phase 4 先不做 in-process cache（Vercel serverless + `NullPool`，跨 invocation 的快取不可靠），每輪直接查詢；延遲成為問題時再加只存「最新規則 + 版本識別」的快取（2026-10-05 使用者確認延後）。
+   - **版本是否已存在（2026-10-06 修正，原本比較時間戳）**：`rule_versions.created_xact` 記錄寫入版本的 transaction id（`pg_current_xact_id()`），`sessions.rule_snapshot` 記錄建立 session 那個 INSERT 當下的資料庫快照（`pg_current_snapshot()`），兩者都是 server default；`pg_visible_in_snapshot(created_xact, rule_snapshot)` 為 true 才代表版本在 session 開始前已 commit。原本的 `created_at <= sessions.started_at` 有並行問題（review 時在本機重現）：`now()` 是 transaction 開始時間，等待 row lock 或尚未 commit 的更新會拿到比 session 更早的時間戳，session 開始時看不到的 `new_conversations_only` 版本，下一輪卻被誤用。快照判定的是「session 開始時哪些 transaction 已經 commit」，沒有這個時間窗。migration 之前就存在的 session 快照為 NULL，視為任何版本都不存在。
+   - 適用版本由上述判定推導、並記在每則回覆的 `messages.rule_version_id`；session 只多記一個快照，不另建 session 鎖定表（2026-10-05 使用者確認不建鎖定表）。Phase 4 先不做 in-process cache（Vercel serverless + `NullPool`，跨 invocation 的快取不可靠），每輪直接查詢；延遲成為問題時再加只存「最新規則 + 版本識別」的快取（2026-10-05 使用者確認延後）。
    - 「新對話」= 新的 `sessions` 列。目前前端每次載入頁面或 reset 都產生新的 `session_id`，且每個 `session_id` 對應一個新的匿名 user（Phase 1 記錄的身份綁定限制），所以「累積 3 次」只能在同一個瀏覽器 session 內達成。
 6. **規則衝突**：命中多條時取 `priority` 最高，再依 `created_at`、`id` 做決定性的 tie-break（同 Phase 3）。
 7. **範例合併**：規則指定的範例優先（依 `example_ids` 順序、去重、只用 `active`、不再檢查範例自身的條件），自動匹配補足，總上限 `EXAMPLE_MATCH_LIMIT`（2）。已封存的範例一律不選，包括舊規則引用的。
@@ -166,13 +167,13 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - **先在 Neon 跑 Phase 4 migration**：Phase 4 在 `messages` 加了欄位，ORM 每次 INSERT 都會帶上這些欄位；程式碼若比 migration 先上 Vercel，所有會寫 messages 的 `/chat` 都會 500，fail-open 救不了。新欄位預計都是 nullable 或有預設值，但這只是設計意圖、**不等於已驗證**：migration 寫好後，要在本機 Docker Postgres 套用 Phase 4 migration，再用 `main` 的程式碼（不含 Phase 4）跑 `pytest tests/` 並實際打 `/chat`，確認舊版程式在新 schema 上正常，才能先套用到 Neon。
 - **在 Vercel 設定 `ADMIN_API_KEY`**：否則 fail-closed 的寫入端點會讓正式環境無法建立任何規則，既有的 persona／範例／指派寫入也會一起失效。
 
-**實作狀態（2026-10-06）**：4.1–4.6 已實作，`tests/test_phase4_rules.py` 在本機 Docker Postgres 全過（無 DB 時 29 項單元測試照跑，DB 整合測試 6 項，含 v1 active → v2 archived → v3 的端到端案例）；全套 `pytest tests/` 236 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**Migration 相容舊版程式已驗證**：本機套用 `6d55b7146dcc` 後，用尚未包含 Phase 4 的程式碼跑 `pytest tests/`（201 passed）、`test_phase1_e2e.py`，並實際打一次 `/chat`（真的 Azure OpenAI，HTTP 200，兩則 message 正常寫入、`output_replaced` 預設 false），驗證後已刪除測試資料。**仍未驗證的部分**：(1)「命中時可觀察到 ACT 語氣、溫暖接納風格」需要真的 Azure OpenAI 由人判斷，自動化測試 mock 了 LLM，只驗證策略正確進入 prompt；(2) 尚未在 Neon 套用 migration、尚未設定 Vercel `ADMIN_API_KEY`（見上方硬性前置條件）。
+**實作狀態（2026-10-06）**：4.1–4.6 已實作，`tests/test_phase4_rules.py` 在本機 Docker Postgres 全過（無 DB 時 29 項單元測試照跑，DB 整合測試 7 項，含 v1 active → v2 archived → v3 的端到端案例，以及「v2 在 session 開始前開始寫、開始後才 commit」的並行案例——已確認改回時間戳判定時這個測試會失敗）；全套 `pytest tests/` 237 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**Migration 相容舊版程式已驗證**（含快照欄位的最終版 migration）：本機套用 `6d55b7146dcc` 後，在 `main`（`764cf1e`）的 worktree 跑 `pytest tests/`（201 passed）、`test_phase1_e2e.py`，並實際打一次 `/chat`（真的 Azure OpenAI，HTTP 200，session 由 server default 記下快照，兩則 message 正常寫入、`output_replaced` 預設 false），驗證後已刪除測試資料。**仍未驗證的部分**：(1)「命中時可觀察到 ACT 語氣、溫暖接納風格」需要真的 Azure OpenAI 由人判斷，自動化測試 mock 了 LLM，只驗證策略正確進入 prompt；(2) 尚未在 Neon 套用 migration、尚未設定 Vercel `ADMIN_API_KEY`（見上方硬性前置條件）。
 
 **實作筆記（與計畫的差異與補充）**：
 - `ensure_session()` 也會順便建立匿名 user，所以首輪起 Example Selector 就查得到 user（profile 是空的，不會命中任何範例，行為不變）。LLM 呼叫失敗（503）時會留下沒有 message 的 session 列，不影響後續對話。
 - `persona_switch_log` 的第一筆（`None → persona`）從第 2 輪提前到第 1 輪：session 現在首輪就存在，`record_persona_usage()` 不再因找不到 session 而略過。筆數不變，只是時間點提早。
-- 每輪多了 `ensure_session()` 一次寫入，以及 Rule Engine 對 users / rules / rule_versions / profile / topics 的查詢（第四次獨立查 users，跟 Phase 2/3 記錄的已知取捨同類）。Rule Engine 先略過目前狀態為 `archived` 的規則（最新版本必為封存快照、必定停用），`draft` 不能略過（舊 session 可能仍適用更早的 active 版本）。
-- Admin API：`GET /rules`、`GET /rules/{id}/versions`（讀取不需要 key）；`POST /rules`、`PATCH /rules/{id}`（需要 key）。`PATCH` 用 `SELECT … FOR UPDATE` 鎖住規則，避免並行修改撞 `version_number`；驗證失敗的修改不會留下版本。`in_review` 保留給 Phase 5，API 不接受；回滾（5.4）尚未提供，但快照已完整。
+- 每輪多了 `ensure_session()`（session 已存在時只是一次查詢），以及 Rule Engine 對 users / rules+rule_versions+sessions / profile / topics 的查詢（第四次獨立查 users，跟 Phase 2/3 記錄的已知取捨同類）。Rule Engine 先略過目前狀態為 `archived` 的規則（最新版本必為封存快照、必定停用），`draft` 不能略過（舊 session 可能仍適用更早的 active 版本）。
+- Admin API：`GET /rules`、`GET /rules/{id}/versions`（讀取不需要 key）；`POST /rules`、`PATCH /rules/{id}`（需要 key）。`PATCH` 用 `SELECT … FOR NO KEY UPDATE` 鎖住規則，避免並行修改撞 `version_number`。不用 `FOR UPDATE`：它會擋住 `messages.rule_id` 外鍵檢查的 KEY SHARE 鎖，管理者修改規則期間，命中這條規則的 `/chat` 寫 message 時都要等（寫並行測試時實際卡住才發現）；驗證失敗的修改不會留下版本。`in_review` 保留給 Phase 5，API 不接受；回滾（5.4）尚未提供，但快照已完整。
 - 引用驗證：persona / 範例必須存在；結果狀態是 `active` 時還必須都是 active。因此 active 規則引用的範例被封存後，再修改這條規則（例如調 priority）會被 422 擋下，要先移除該範例或改成 draft。
 - `validate_condition_json()` 加了 `mode` 參數；`admin_examples.py` 原本直接把它當 pydantic validator 傳入，pydantic 會把第二個參數誤當成 `ValidationInfo`，所以改成明確的 classmethod 包一層。
 - `test_phase1_e2e.py` 呼叫指派 API 時改帶 `X-Admin-Key`（未設定 `ADMIN_API_KEY` 時用測試專用值）；`tests/test_phase3_examples.py` 同樣補 key，並讓假的 Example Selector 接受新的 `pinned_example_ids` 參數。

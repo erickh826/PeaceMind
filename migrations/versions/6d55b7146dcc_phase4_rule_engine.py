@@ -13,7 +13,17 @@ messages 的變更：
 - output_replaced：L3 Output Gateway 替換回覆時為 true，統計規則成效時排除。
   NOT NULL + server_default false，Phase 3 以前的程式碼 INSERT 時不帶這個欄位也能寫入。
 
-三個新欄位都不需要舊程式配合，所以這個 migration 可以先套用到正式環境、再部署
+版本生效判定（new_conversations_only）：
+- rule_versions.created_xact：寫入該版本的 transaction id（pg_current_xact_id()）。
+- sessions.rule_snapshot：建立 session 那個 INSERT 當下的資料庫快照（pg_current_snapshot()）。
+- 「這個版本在 session 開始時已存在」= pg_visible_in_snapshot(created_xact, rule_snapshot)。
+不用時間戳：now() 是 transaction 開始時間，等待 row lock 或尚未 commit 的更新會拿到
+比 session 更早的時間戳，導致 session 開始時看不到的版本被誤判為「開始前就存在」。
+快照判定的是「session 開始時哪些 transaction 已經 commit」，沒有這個時間窗。
+在 migration 之前就存在的 session，rule_snapshot 是 NULL，視為任何版本都不存在
+（規則表本身是這個 migration 才建立的，這個判定就是正確的）。
+
+新欄位都不需要舊程式配合（server default 自動帶入），所以這個 migration 可以先套用到正式環境、再部署
 Phase 4 程式碼（merge 前的硬性前置條件，見任務文件）。
 
 FK 一律 SET NULL 而不是 CASCADE：目前沒有硬刪除規則的 API，但萬一手動刪除，
@@ -84,6 +94,15 @@ def upgrade() -> None:
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.UniqueConstraint("rule_id", "version_number", name="uq_rule_versions_rule_version"),
     )
+    # SQLAlchemy 沒有 xid8 / pg_snapshot 型別，用原生 SQL 新增（見檔案頂端說明）
+    op.execute(
+        "ALTER TABLE rule_versions "
+        "ADD COLUMN created_xact xid8 NOT NULL DEFAULT pg_current_xact_id()"
+    )
+    op.execute(
+        "ALTER TABLE sessions "
+        "ADD COLUMN rule_snapshot pg_snapshot DEFAULT pg_current_snapshot()"
+    )
 
     op.create_foreign_key(
         "fk_messages_rule_id", "messages", "rules",
@@ -109,6 +128,7 @@ def downgrade() -> None:
     op.drop_column("messages", "output_replaced")
     op.drop_column("messages", "rule_version_id")
     op.drop_constraint("fk_messages_rule_id", "messages", type_="foreignkey")
+    op.drop_column("sessions", "rule_snapshot")
     op.drop_table("rule_versions")
     op.drop_index("ix_rules_status", table_name="rules")
     op.drop_table("rules")

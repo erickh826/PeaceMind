@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Protocol
 
 # Phase 0：方法改為 async，讓 PostgresConversationStore 能用 async SQLAlchemy
@@ -14,11 +13,11 @@ class ConversationStore(Protocol):
     async def get_history(self, session_id: str) -> list[dict[str, str]]:
         ...
 
-    async def ensure_session(self, session_id: str) -> datetime | None:
+    async def ensure_session(self, session_id: str) -> None:
         """
-        確保 session 已存在並回傳 started_at（Phase 4：Rule Engine 用它選規則版本）。
-        原本 session 要到回覆後 append() 才建立，首輪沒有時間基準。沒有結構化 session
-        的實作回傳 None。
+        確保 session 已存在（Phase 4）。Rule Engine 依建立 session 當下的資料庫快照判定
+        規則版本，原本 session 要到回覆後 append() 才建立，首輪沒有判定基準。沒有結構化
+        session 的實作什麼都不做。
         """
         ...
 
