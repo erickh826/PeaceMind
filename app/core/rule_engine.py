@@ -130,8 +130,9 @@ async def resolve_rule(session_client_key: str | None) -> AppliedRule:
 
 # 目前狀態是 archived 的規則，最新版本必定是 archived 快照（API 在同一筆 transaction
 # 更新 rules 與寫入版本），且封存版本永遠適用 → 一定停用，直接略過。draft 不能略過：
-# 舊 session 可能還適用更早的 active 版本。session 是 migration 之前建立的（快照為 NULL）
-# 時，任何版本都視為不存在。
+# 舊 session 可能還適用更早的 active 版本。migration 之前建立的 session 會被填入
+# migration 當下的快照（早於任何規則版本），任何版本都視為不存在；COALESCE 只是保險，
+# 快照萬一是 NULL 時同樣視為不存在。
 _VERSIONS_SQL = """
 SELECT r.id AS rule_id, r.created_at AS rule_created_at,
        rv.id AS version_id, rv.version_number, rv.snapshot_json,

@@ -20,8 +20,9 @@ messages 的變更：
 不用時間戳：now() 是 transaction 開始時間，等待 row lock 或尚未 commit 的更新會拿到
 比 session 更早的時間戳，導致 session 開始時看不到的版本被誤判為「開始前就存在」。
 快照判定的是「session 開始時哪些 transaction 已經 commit」，沒有這個時間窗。
-在 migration 之前就存在的 session，rule_snapshot 是 NULL，視為任何版本都不存在
-（規則表本身是這個 migration 才建立的，這個判定就是正確的）。
+在 migration 之前就存在的 session：ADD COLUMN … DEFAULT 會把 migration 執行當下的快照
+填進既有的列（不是 NULL）。規則表是這個 migration 才建立的，之後寫入的任何版本都不在
+這個快照裡，所以這些 session 一樣視為任何版本都不存在，判定正確。
 
 新欄位都不需要舊程式配合（server default 自動帶入），所以這個 migration 可以先套用到正式環境、再部署
 Phase 4 程式碼（merge 前的硬性前置條件，見任務文件）。
