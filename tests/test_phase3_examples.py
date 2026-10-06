@@ -45,6 +45,19 @@ async def _noop(*args, **kwargs) -> None:
     return None
 
 
+# Phase 4 起 admin 寫入端點要求 X-Admin-Key（app/core/admin_auth.py）
+TEST_ADMIN_KEY = "phase3-test-admin-key"
+
+
+@pytest.fixture(autouse=True)
+def _admin_key(monkeypatch):
+    monkeypatch.setenv("ADMIN_API_KEY", TEST_ADMIN_KEY)
+
+
+def _client() -> TestClient:
+    return TestClient(app, headers={"X-Admin-Key": TEST_ADMIN_KEY})
+
+
 def _selection(*examples: tuple[str, str]) -> ExampleSelection:
     return ExampleSelection(
         user_id=None,
@@ -139,7 +152,7 @@ def _patch_chat_pipeline(monkeypatch, selection: ExampleSelection, llm_reply: st
         captured.append(kwargs)
         return llm_reply
 
-    async def fake_select(session_id):
+    async def fake_select(session_id, **kwargs):
         return selection
 
     monkeypatch.setattr("app.routers.chat.chat_with_llm", fake_chat_with_llm)
@@ -307,7 +320,7 @@ def test_matching_example_is_injected_and_usage_logged(monkeypatch):
     from app.db.models_example import ExampleUsageLog
 
     captured = _patch_llm_and_hooks(monkeypatch)
-    client = TestClient(app)
+    client = _client()
     session_id = _new_session_id("inject")
     topic = _unique_topic("inject")
     example_ids: list[str] = []
@@ -364,7 +377,7 @@ def test_usage_log_survives_reset_with_nulled_references(monkeypatch):
     from app.db.models_example import ExampleUsageLog
 
     _patch_llm_and_hooks(monkeypatch)
-    client = TestClient(app)
+    client = _client()
     session_id = _new_session_id("reset")
     topic = _unique_topic("reset")
     example_ids: list[str] = []
@@ -398,7 +411,7 @@ def test_selection_is_capped_and_prefers_more_specific_then_newer(monkeypatch):
     from app.core.example_selector import EXAMPLE_MATCH_LIMIT, select_applicable_examples
 
     _patch_llm_and_hooks(monkeypatch)
-    client = TestClient(app)
+    client = _client()
     session_id = _new_session_id("limit")
     topic = _unique_topic("limit")
     example_ids: list[str] = []
@@ -427,7 +440,7 @@ def test_archived_example_is_not_selected(monkeypatch):
     from app.core.example_selector import select_applicable_examples
 
     _patch_llm_and_hooks(monkeypatch)
-    client = TestClient(app)
+    client = _client()
     session_id = _new_session_id("archive")
     topic = _unique_topic("archive")
     example_ids: list[str] = []
@@ -451,7 +464,7 @@ def test_archived_example_is_not_selected(monkeypatch):
 
 @requires_db
 def test_admin_examples_api_validation():
-    client = TestClient(app)
+    client = _client()
     # 空條件永遠不會命中，建立時就擋掉
     assert client.post(
         "/api/v1/admin/examples", json={"content": "x", "applicable_conditions_json": {}}

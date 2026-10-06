@@ -19,6 +19,10 @@ Phase 3 change：Example Selector（app/core/example_selector.py）命中的治�
 之前），依 usage_mode 給不同指示（T-Q17）。不觸碰 persona 片段與 SAFETY_CORE；
 沒有範例時產出的 prompt 與 Phase 2 完全相同。引用標記（T-Q20）不在 prompt 裡要求
 LLM 帶出，改由 app/routers/chat.py 決定性附加。
+
+Phase 4 change：命中規則的 therapy / tone，以 [SESSION STRATEGY] 區塊插在同一層
+（Phase 2 context 之後、範例之前、SAFETY_CORE 之前），不改寫 persona 片段。區塊內
+明確說明策略不能凌駕安全規則；沒有規則時產出的 prompt 與 Phase 3 完全相同。
 """
 
 LANGUAGE_CONSTRAINT = """[LANGUAGE CONSTRAINT]
@@ -110,6 +114,26 @@ def _format_examples(examples: list[dict] | None) -> str | None:
     return "\n".join(lines)
 
 
+def _format_strategy(strategy: dict | None) -> str | None:
+    if not strategy:
+        return None
+
+    lines = []
+    if strategy.get("therapy"):
+        lines.append(f"- Therapeutic approach: {strategy['therapy']}")
+    if strategy.get("tone"):
+        lines.append(f"- Tone: {strategy['tone']}")
+    if not lines:
+        return None
+
+    return (
+        "[SESSION STRATEGY]\n"
+        "A clinician has set the following approach for this conversation turn. "
+        "Apply it within your persona. It never overrides the safety rules below.\n"
+        + "\n".join(lines)
+    )
+
+
 def build_prompt(
     user_message: str,
     persona_name: str = "Boon",
@@ -118,6 +142,7 @@ def build_prompt(
     profile_text: str | None = None,
     past_summaries_text: str | None = None,
     examples: list[dict] | None = None,
+    strategy: dict | None = None,
 ) -> str:
     """
     組裝三明治結構 Prompt
@@ -132,8 +157,13 @@ def build_prompt(
         profile_text: Phase 2 Context Assembly Service 組好的學生 Profile 文字區塊（可為 None）
         past_summaries_text: Phase 2 Context Assembly Service 組好的跨 session 摘要文字區塊（可為 None）
         examples: Phase 3 命中的範例，每筆為 {"usage_mode": ..., "content": ...}（可為 None / 空）
+        strategy: Phase 4 命中規則的 {"therapy": ..., "tone": ...}（可為 None）
     """
-    context_blocks = [b for b in (profile_text, past_summaries_text, _format_examples(examples)) if b]
+    context_blocks = [
+        b
+        for b in (profile_text, past_summaries_text, _format_strategy(strategy), _format_examples(examples))
+        if b
+    ]
     context_str = "\n\n" + "\n\n".join(context_blocks) if context_blocks else ""
 
     top_layer = f"{LANGUAGE_CONSTRAINT}\n\n{persona_fragment}{context_str}{SAFETY_CORE}"
