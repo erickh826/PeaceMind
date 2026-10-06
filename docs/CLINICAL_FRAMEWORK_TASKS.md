@@ -129,7 +129,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - [ ] 4.5 `scope` 生效範圍邏輯：new_conversations_only vs immediate（T-Q5）
 - [ ] 4.6 Rule action 接進 Context Assembly：覆寫 persona / 帶入 example_ids / 設定 therapy+tone
 
-**完成判準**：新增一條規則（如原文件範例：社交焦慮+low risk+第3次），命中時可觀察到 ACT 語氣、溫暖接納風格的回覆。主題只能用 `STANDARD_CLINICAL_TOPICS` 裡的英文名稱，實際寫法為 `{"topics_include": ["Anxiety"], "risk_level": "low", "min_topic_mentions": 3}`。
+**完成判準**：新增一條規則（焦慮 + low risk + 第 3 次），命中時可觀察到 ACT 語氣、溫暖接納風格的回覆。實際寫法為 `{"topics_include": ["Anxiety"], "risk_level": "low", "min_topic_mentions": 3}`。原文件範例是「社交焦慮」，但主題只能用 `STANDARD_CLINICAL_TOPICS` 裡的英文名稱，`Anxiety` 比社交焦慮廣，所以判準直接稱為「焦慮」，不宣稱能區分社交焦慮。
 
 **開工前的設計決策（2026-10-05 與使用者確認）**：
 
@@ -144,7 +144,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 3. **Persona 優先序**：治療師手動指派 > 命中規則的 `persona_id` > `persona_match_conditions` 自動匹配 > 預設。手動指派只鎖住 persona；規則的 `therapy` / `tone` 對手動指派的學生仍然生效。
 4. **Therapy / tone 注入**：獨立的「本輪策略」prompt 區塊，放在 `context_blocks`（`SAFETY_CORE` 之前），不改寫 persona 片段；`SAFETY_CORE` 與三層安全閘門維持最高優先。
 5. **版本與 `scope`**：每次變更（建立、修改、啟用、封存、回滾）在**同一筆 transaction** 更新 `rules` 並寫一筆 `rule_versions` 快照；`scope` 與 `status` 都是快照的一部分。
-   - **先選版本，再看狀態**：適用版本 = 符合下列任一條件的最新一筆版本——快照 `status = archived`（封存視為立即生效的停用版本，不論快照的 `scope`）、快照 `scope = immediate`、或 `created_at <= sessions.started_at`。選出後**該版本的** `status` 是 `active` 才套用；找不到適用版本也不套用。**不能先篩選 active 再選版本**，否則會跳過停用版本、重新選中更舊的 active 版本。
+   - **先選版本，再看狀態**：適用版本 = 符合下列任一條件、同一條規則中 `version_number` 最大的一筆版本（「最新」一律依 `version_number` 判斷，不用 `created_at` 排序，避免時間相同時結果不確定；`created_at` 只用來跟 `sessions.started_at` 比較）——快照 `status = archived`（封存視為立即生效的停用版本，不論快照的 `scope`）、快照 `scope = immediate`、或 `created_at <= sessions.started_at`。選出後**該版本的** `status` 是 `active` 才套用；找不到適用版本也不套用。**不能先篩選 active 再選版本**，否則會跳過停用版本、重新選中更舊的 active 版本。
    - 必測案例：v1 active → v2 archived → v3 active（`new_conversations_only`）：在 v2 之前開始的舊 session 維持停用（選中 v2），v3 之後的新 session 用 v3。另測一般混合 scope 歷史。
    - 改回 `draft` 等非 active 狀態跟其他修改一樣依該版本的 `scope` 生效。
    - **首輪也要有時間基準**：目前 `get_history()` 找不到 session 時回空清單，session 要到回覆後 `append()` 才建立，首輪沒有 `started_at`。`ConversationStore` 新增 `ensure_session()`（Postgres 版 get-or-create 並回傳 `started_at`，InMemory 版回傳 `None`），`/chat` 通過 L1 安全檢查後、Rule Engine 之前先呼叫。
@@ -163,7 +163,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 10. **失敗處理**：Rule Engine 跟 Example Selector 一樣 fail-open，查詢出錯時記 log、視為沒有命中規則，`/chat` 不因此 500。合併後的範例清單同時用於 prompt、引用標記判斷與 `log_example_usage()`。
 
 **Merge 前的硬性前置條件**（比 Phase 3 更嚴格）：
-- **先在 Neon 跑 Phase 4 migration**：Phase 4 在 `messages` 加了欄位，ORM 每次 INSERT 都會帶上這些欄位；程式碼若比 migration 先上 Vercel，所有會寫 messages 的 `/chat` 都會 500，fail-open 救不了。新欄位都是 nullable 或有預設值，先 migrate 對目前的 `main` 是安全的。
+- **先在 Neon 跑 Phase 4 migration**：Phase 4 在 `messages` 加了欄位，ORM 每次 INSERT 都會帶上這些欄位；程式碼若比 migration 先上 Vercel，所有會寫 messages 的 `/chat` 都會 500，fail-open 救不了。新欄位預計都是 nullable 或有預設值，但這只是設計意圖、**不等於已驗證**：migration 寫好後，要在本機 Docker Postgres 套用 Phase 4 migration，再用 `main` 的程式碼（不含 Phase 4）跑 `pytest tests/` 並實際打 `/chat`，確認舊版程式在新 schema 上正常，才能先套用到 Neon。
 - **在 Vercel 設定 `ADMIN_API_KEY`**：否則 fail-closed 的寫入端點會讓正式環境無法建立任何規則，既有的 persona／範例／指派寫入也會一起失效。
 
 ---
