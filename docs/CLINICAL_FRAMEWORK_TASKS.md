@@ -226,7 +226,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 **已知小問題 → 已在 `hotfix/phase5-review-followups` 修正**：
 1. 雙人模式下回滾只允許目前是 `active` 的規則（draft / in_review 回 409）；單人模式不變。
-2. 回滾後送審若沒指定 scope，預設回到回滾前那個版本的 scope（以版本備註 `回滾到 v` 辨識）。
+2. 回滾後送審若沒指定 scope，預設回到回滾前那個版本的 scope（以版本備註 `回滾到 v` 辨識）。沙盒測試套用同一個預設（共用 `_proposed_content()`），否則沙盒的指紋跟送審對不上，回滾後「測過再送審」會一直被 409 擋下。
 3. 「已測過」的指紋現在包含規則引用的 persona 文字與範例內容（`reference_texts`）；測試後這些被改過，送審需重新測試。注意：核准時不會重新比對這個指紋。
 
 ---

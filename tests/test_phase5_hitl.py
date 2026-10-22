@@ -393,8 +393,9 @@ def test_review_after_rollback_defaults_scope_back(monkeypatch, world):
     assert c.post(f"{BASE}/rules/{rid}/rollback", json={"changed_by": reviewer, "reason": "x"}).status_code == 200
     assert _rule(c, rid)["scope"] == "immediate"
 
+    # 沙盒與送審都不帶 scope：兩邊要套用同一個預設，指紋才對得上
     cfg = {"action_json": {"therapy": "ACT", "tone": "calm"}}
-    _test_current(c, rid, monkeypatch, {**cfg, "scope": "new_conversations_only"})
+    _test_current(c, rid, monkeypatch, cfg)
     req = c.post(f"{BASE}/rules/{rid}/submit-review", json={"submitted_by": submitter, "proposed": cfg})
     assert req.status_code == 200, req.text
     assert req.json()["proposed_snapshot_json"]["scope"] == "new_conversations_only"

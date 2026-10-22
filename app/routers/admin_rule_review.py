@@ -69,6 +69,19 @@ def _effective_content(rule, overlay: ConfigOverlay | None) -> dict:
     return content
 
 
+async def _proposed_content(db, rule, overlay: ConfigOverlay | None) -> dict:
+    """
+    沙盒與送審共用：沒指定 scope 且規則剛回滾過時，scope 預設回到回滾前的值。
+    兩邊必須用同一份邏輯，否則沙盒算出的指紋跟送審的對不上，測過也送不了審。
+    """
+    content = _effective_content(rule, overlay)
+    if overlay is None or overlay.scope is None:
+        restored = await _pre_rollback_scope(db, rule)
+        if restored is not None:
+            content["scope"] = restored
+    return content
+
+
 async def _lock_rule(db, rule_id: uuid.UUID):
     from app.db.models_rule import Rule
 
@@ -204,7 +217,7 @@ async def test_rule(rule_id: str, request: RuleTestRequest):
         if recent >= _max_runs_per_hour():
             raise HTTPException(status_code=429, detail="沙盒測試次數已達每小時上限，請稍後再試")
 
-        content = _effective_content(rule, request.config)
+        content = await _proposed_content(db, rule, request.config)
         # 測試 draft 時引用的 persona / 範例可能還沒 active，只檢查存在
         await _check_references(db, content["action_json"], activating=False)
         version = await _latest_version(db, rule.id)
@@ -378,11 +391,7 @@ async def submit_review(rule_id: str, request: SubmitReviewRequest):
         if pending is not None:
             raise HTTPException(status_code=409, detail="這條規則已經有待審的申請")
 
-        content = _effective_content(rule, request.proposed)
-        if request.proposed is None or request.proposed.scope is None:
-            restored = await _pre_rollback_scope(db, rule)
-            if restored is not None:
-                content["scope"] = restored
+        content = await _proposed_content(db, rule, request.proposed)
         if rule.status == "active" and content == content_of(rule.snapshot()):
             raise HTTPException(status_code=422, detail="提議的內容跟目前 active 的內容相同，沒有要審核的修改")
         await _check_references(db, content["action_json"], activating=True)
