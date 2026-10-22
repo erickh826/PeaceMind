@@ -99,6 +99,16 @@ async def _load_examples(db, example_ids: list[str]):
     return [by_id[i] for i in ordered if i in by_id]
 
 
+async def reference_texts(db, action: dict) -> dict:
+    """沙盒實際會餵給 LLM 的 persona 片段與範例內容，用來算「測過」的指紋。"""
+    persona_name, persona_fragment = await _load_persona(db, action.get("persona_id"))
+    examples = await _load_examples(db, action.get("example_ids") or [])
+    return {
+        "persona": [persona_name, persona_fragment],
+        "examples": [[str(e.id), e.content] for e in examples],
+    }
+
+
 async def run_sandbox(db, content: dict, turns: list[dict]) -> SandboxResult:
     """turns 最後一則必須是 user（router 驗證）；其餘當作對話歷史。LLM 失敗時往外拋例外。"""
     from app.routers.chat import ATTRIBUTION_TAG, _BLOCK_MSG, _MULTITURN_BLOCK_MSG

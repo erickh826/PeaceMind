@@ -115,7 +115,7 @@ def _stub_llm(monkeypatch, reply="這是沙盒回覆"):
     return calls
 
 
-async def _cleanup(rule_ids=(), therapist_ids=(), session_ids=()) -> None:
+async def _cleanup(rule_ids=(), therapist_ids=(), session_ids=(), example_ids=()) -> None:
     from sqlalchemy import text
 
     from app.db import get_session
@@ -128,6 +128,8 @@ async def _cleanup(rule_ids=(), therapist_ids=(), session_ids=()) -> None:
             for table in ("rule_review_requests", "rule_test_runs"):
                 await db.execute(text(f"DELETE FROM {table} WHERE rule_id = :id"), {"id": rid})
             await db.execute(text("DELETE FROM rules WHERE id = :id"), {"id": rid})
+        for eid in example_ids:
+            await db.execute(text("DELETE FROM response_examples WHERE id = :id"), {"id": eid})
         for tid in therapist_ids:
             for table, col in (
                 ("manual_overrides", "overridden_by"), ("feedback_tags", "tagged_by"),
@@ -140,9 +142,9 @@ async def _cleanup(rule_ids=(), therapist_ids=(), session_ids=()) -> None:
 @pytest.fixture
 def world():
     """兩位治療師 + 一位 senior，結束時把測試資料清掉。"""
-    state = {"rules": [], "therapists": [], "sessions": []}
+    state = {"rules": [], "therapists": [], "sessions": [], "examples": []}
     yield state
-    _run(_cleanup(state["rules"], state["therapists"], state["sessions"]))
+    _run(_cleanup(state["rules"], state["therapists"], state["sessions"], state["examples"]))
 
 
 def _rule(client, rid) -> dict:
@@ -355,4 +357,65 @@ def test_override_and_tags_are_post_hoc_only(world):
     assert reply["content"] == "原本的回覆"  # 訊息本身不變
     assert reply["tags"] == ["缺乏同理心", "太正式"] or set(reply["tags"]) == {"太正式", "缺乏同理心"}
     assert len(reply["overrides"]) == 1
+
+
+@requires_db
+def test_dual_rollback_rejects_non_active_rule(monkeypatch, world):
+    _stub_llm(monkeypatch)
+    c = _client()
+    actor = _therapist(c, "admin")
+    world["therapists"].append(actor)
+    rid = _draft(c, world)
+    resp = c.post(f"{BASE}/rules/{rid}/rollback", json={"changed_by": actor, "reason": "x"})
+    assert resp.status_code == 409
+    assert _rule(c, rid)["status"] == "draft"
+
+
+@requires_db
+def test_review_after_rollback_defaults_scope_back(monkeypatch, world):
+    _stub_llm(monkeypatch)
+    c = _client()
+    submitter, reviewer = _therapist(c, "therapist"), _therapist(c, "admin")
+    world["therapists"] += [submitter, reviewer]
+    rid = _draft(c, world)
+
+    def publish(config=None):
+        _test_current(c, rid, monkeypatch, config)
+        body = {"submitted_by": submitter, **({"proposed": config} if config else {})}
+        req = c.post(f"{BASE}/rules/{rid}/submit-review", json=body)
+        assert req.status_code == 200, req.text
+        ok = c.post(f"{BASE}/review-requests/{req.json()['id']}/approve", json={"reviewer_id": reviewer})
+        assert ok.status_code == 200, ok.text
+        return req.json()
+
+    publish()
+    publish({"action_json": CBT})
+    assert c.post(f"{BASE}/rules/{rid}/rollback", json={"changed_by": reviewer, "reason": "x"}).status_code == 200
+    assert _rule(c, rid)["scope"] == "immediate"
+
+    cfg = {"action_json": {"therapy": "ACT", "tone": "calm"}}
+    _test_current(c, rid, monkeypatch, {**cfg, "scope": "new_conversations_only"})
+    req = c.post(f"{BASE}/rules/{rid}/submit-review", json={"submitted_by": submitter, "proposed": cfg})
+    assert req.status_code == 200, req.text
+    assert req.json()["proposed_snapshot_json"]["scope"] == "new_conversations_only"
+
+@requires_db
+def test_editing_referenced_example_invalidates_tested_state(monkeypatch, world):
+    _stub_llm(monkeypatch)
+    c = _client()
+    submitter = _therapist(c, "therapist")
+    world["therapists"].append(submitter)
+    ex = c.post(f"{BASE}/examples", json={
+        "content": "範例 A", "applicable_conditions_json": {"topics_include": ["Anxiety"]}, "status": "active"})
+    assert ex.status_code == 200, ex.text
+    eid = ex.json()["id"]
+    world.setdefault("examples", []).append(eid)
+    rid = _draft(c, world, action={"therapy": "ACT", "example_ids": [eid]})
+    _test_current(c, rid, monkeypatch)
+
+    assert c.patch(f"{BASE}/examples/{eid}", json={"content": "範例 A（改過）"}).status_code == 200
+    resp = c.post(f"{BASE}/rules/{rid}/submit-review", json={"submitted_by": submitter})
+    assert resp.status_code == 409
+    _test_current(c, rid, monkeypatch)
+    assert c.post(f"{BASE}/rules/{rid}/submit-review", json={"submitted_by": submitter}).status_code == 200
 

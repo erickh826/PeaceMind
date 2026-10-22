@@ -224,10 +224,10 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - 正式環境驗證：會回傳對話內容或會寫入的新端點（`sessions`、`messages`、`overrides`、`feedback-tags`、`therapists`、`test-runs`、`test`、`submit-review`、`rollback`、`override`）不帶 key 皆 401；`GET /rules`、`GET /review-requests` 公開 200；帶 key 直接建立 active 規則回 409（確認 dual 生效，沒有寫入任何資料）；merge 後 `/chat` 200（session `smoke-postphase5-20261022`）。
 - 沒有在正式環境呼叫沙盒（會打真的 LLM 並寫入 `rule_test_runs`）。正式環境要啟用規則前，需要先用 `POST /admin/therapists` 建立第二位 `senior_therapist` / `admin`。
 
-**已知小問題（不擋 merge，待後續修正）**：
-1. 雙人模式下對 `draft` / `in_review` 規則回滾會直接上線、不經審核（規則要先在單人模式被改回 draft 才會遇到）。
-2. 回滾後 `rule.scope` 停在 `immediate`，之後送審的修改會沿用，除非送審時改回。
-3. 「已測過」只比對規則內容的 hash；測試後若引用的範例或 persona 文字被修改，送審仍算已測過。
+**已知小問題 → 已在 `hotfix/phase5-review-followups` 修正**：
+1. 雙人模式下回滾只允許目前是 `active` 的規則（draft / in_review 回 409）；單人模式不變。
+2. 回滾後送審若沒指定 scope，預設回到回滾前那個版本的 scope（以版本備註 `回滾到 v` 辨識）。
+3. 「已測過」的指紋現在包含規則引用的 persona 文字與範例內容（`reference_texts`）；測試後這些被改過，送審需重新測試。注意：核准時不會重新比對這個指紋。
 
 ---
 

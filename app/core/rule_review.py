@@ -40,8 +40,10 @@ def content_of(snapshot: dict) -> dict:
     return {key: snapshot[key] for key in CONTENT_FIELDS}
 
 
-def content_hash(content: dict) -> str:
-    normalized = json.dumps(
-        {key: content[key] for key in CONTENT_FIELDS}, sort_keys=True, ensure_ascii=False
-    )
+def content_hash(content: dict, references: dict | None = None) -> str:
+    """references：規則引用的 persona 文字與範例內容；測完後它們被改過，hash 就會不同。"""
+    payload = {key: content[key] for key in CONTENT_FIELDS}
+    if references is not None:
+        payload["references"] = references
+    normalized = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
