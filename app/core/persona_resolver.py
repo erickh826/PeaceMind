@@ -3,7 +3,9 @@ Persona Resolver（Phase 1 + Phase 2 自動匹配）
 決定某次對話要用哪個 persona，並記錄切換歷史（T-Q13/T-Q14）。
 
 優先序（對應 CLINICAL_FRAMEWORK_ARCHITECTURE.md §3.1）：
-  1. persona_assignments（治療師手動指派，T-Q15）—— 最高優先，覆寫自動匹配
+  1. persona_assignments（治療師手動指派，T-Q15）—— 最高優先，覆寫規則與自動匹配
+  1.5 命中規則的 action_json.persona_id（Phase 4）—— 只在沒有手動指派時生效；
+      手動指派只鎖住 persona，規則的 therapy / tone 仍然生效（由 /chat 另外帶入）
   2. persona_match_conditions 自動匹配（T-Q12，Phase 2 起生效）—— 依 priority
      排序，比對 user_profiles.year_of_study + profile_topics（達門檻的演化主題）
   3. is_default=true 的系統預設 persona
@@ -19,6 +21,7 @@ PostgresConversationStore 的匿名 user 綁定方式）。這只是暫時的身
 from __future__ import annotations
 
 import os
+import uuid
 from dataclasses import dataclass
 
 from app.prompts.system_prompt import DEFAULT_PERSONA_FRAGMENT
@@ -44,13 +47,17 @@ FALLBACK_PERSONA = ResolvedPersona(
 )
 
 
-async def resolve_persona(user_client_key: str | None = None) -> ResolvedPersona:
+async def resolve_persona(
+    user_client_key: str | None = None, rule_persona_id: str | None = None
+) -> ResolvedPersona:
     """
     解析目前對話應該使用的 persona。
 
     Args:
         user_client_key: 前端傳入的 session_id，用於查詢是否有治療師手動指派
                           給這個使用者的 persona（透過 users.external_ref 對應）
+        rule_persona_id: Phase 4 命中規則指定的 persona；不存在或非 active 時忽略，
+                         繼續往下走自動匹配
     """
     if not os.environ.get("DATABASE_URL"):
         return FALLBACK_PERSONA
@@ -73,6 +80,16 @@ async def resolve_persona(user_client_key: str | None = None) -> ResolvedPersona
                 .where(Persona.status == "active")
             )
             persona_row = result.scalar_one_or_none()
+
+        if persona_row is None and rule_persona_id:
+            try:
+                rule_persona_uuid = uuid.UUID(rule_persona_id)
+            except ValueError:
+                rule_persona_uuid = None
+            if rule_persona_uuid is not None:
+                persona_row = await db.scalar(
+                    select(Persona).where(Persona.id == rule_persona_uuid, Persona.status == "active")
+                )
 
         if persona_row is None and user_client_key:
             persona_row = await _match_persona_by_conditions(db, user_client_key)

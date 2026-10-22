@@ -10,6 +10,7 @@ Steps:
 7. Verify persona_id is stored in messages
 """
 import asyncio
+import os
 import sys
 import uuid
 
@@ -123,8 +124,12 @@ async def main():
     # ── Step 5: Assign Winnie to this user via real HTTP endpoint ───────────
     print("\n" + "=" * 60)
     print("Step 5: POST /api/v1/admin/personas/assign (real HTTP call, not direct ORM)")
+    # Phase 4 起 admin 寫入端點要求 X-Admin-Key；沒有設定就用測試專用的值
+    admin_key = os.environ.setdefault("ADMIN_API_KEY", "phase1-e2e-admin-key")
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(
+        transport=transport, base_url="http://test", headers={"X-Admin-Key": admin_key}
+    ) as client:
         response = await client.post(
             "/api/v1/admin/personas/assign",
             json={

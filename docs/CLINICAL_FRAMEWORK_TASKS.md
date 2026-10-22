@@ -51,7 +51,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - [x] 1.6 治療師手動指派 API：`POST /api/v1/admin/personas/assign`（+ `GET/POST /personas`, `PATCH /personas/{id}/activate`）
 - [x] 1.7 Persona 切換記錄寫入 `persona_switch_log`（`record_persona_usage()`，比對 session 目前 persona 與新解析結果）
 
-**完成判準**：可以在資料庫新增第二個 persona，指派給某個 user，該 user 下次對話行為改變；預設使用者不受影響。 ✅ 邏輯已實作並通過現有測試（169 passed，含 red-team 洩露偵測）。**手動指派流程已在本機 Docker Postgres 上跑過完整 E2E**（repo 根目錄的 `test_phase1_e2e.py`，`6f62129` / `a1e4e9c` commit，已隨 PR #1 進 `main`），並已修正 Windows 上 psycopg async 事件迴圈相容性問題（`d0f2899`）。**仍未驗證的部分**：尚未在 Supabase 正式環境對 `/api/v1/admin/personas/assign` 實際打過一次（目前正式環境的驗證僅涵蓋 Phase 0 的 `/api/v1/chat` 讀寫）。
+**完成判準**：可以在資料庫新增第二個 persona，指派給某個 user，該 user 下次對話行為改變；預設使用者不受影響。 ✅ 邏輯已實作並通過現有測試（169 passed，含 red-team 洩露偵測）。**手動指派流程已在本機 Docker Postgres 上跑過完整 E2E**（repo 根目錄的 `test_phase1_e2e.py`，`6f62129` / `a1e4e9c` commit，已隨 PR #1 進 `main`），並已修正 Windows 上 psycopg async 事件迴圈相容性問題（`d0f2899`）。**正式環境驗證（2026-10-02，Neon）**：列出預設 persona 並成功指派給合成測試使用者。
 
 **Branch/Merge 狀態**：已透過 PR #1（`d80bf1f`）merge 進 `main`（2026-08-19），非「待 merge」。
 
@@ -77,7 +77,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - [x] 2.8 補完 Phase 1.5 的 Persona 自動匹配（`persona_match_conditions`，`app/core/persona_resolver.py`）
 - [ ] 2.9 推薦策略依最新 Profile 動態調整（Q17）— **未實作**，Antigravity 原始計畫文件對這項只有目標敘述、沒有設計細節，實作時判斷屬於獨立範圍，先跳過，之後需要另外設計（前端 `REC_RULES` 怎麼接後端 profile）
 
-**完成判準**：模擬「上次講嗰個朋友」的對話，system 能撈到正確摘要並回應連貫。 ✅ 邏輯已實作並通過 `tests/test_phase2_profiles.py`（本機 Docker Postgres 驗證，5 項全過）。merge 進 `main` 後另有 `9f00a00` fix: stabilize phase 2 profile memory 的穩定性修正。**仍未驗證的部分**：尚未在 Supabase 正式環境跑過這批 migration（`1ade07baedf2_*`）與對應 E2E 驗證。
+**完成判準**：模擬「上次講嗰個朋友」的對話，system 能撈到正確摘要並回應連貫。 ✅ 邏輯已實作並通過 `tests/test_phase2_profiles.py`（本機 Docker Postgres 驗證，5 項全過）。merge 進 `main` 後另有 `9f00a00` fix: stabilize phase 2 profile memory 的穩定性修正。**正式環境驗證（2026-10-02，Neon）**：migration 已在 head；profile 建立時正確記錄測試的年級值，`/chat/end` 回 `ended`，Neon 產生了 session summary。
 
 **Branch/Merge 狀態**：已透過 PR #2（`4b9b4af`）merge 進 `main`（2026-08-20），非「待 merge」。
 
@@ -91,7 +91,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 ---
 
-## Phase 3 — 範例庫（T-Q16–T-Q19）✅ 程式碼完成（2026-09-30，`upgrade/phase3`，尚未 merge）
+## Phase 3 — 範例庫（T-Q16–T-Q19）✅ 完成並已合併進 `main`（PR #3，2026-10-02，merge commit `764cf1e`）
 > 目標：獨立 CRUD + Selector，先用固定條件測試，不接 Rule Engine。
 > 設計依據：`docs/Phase3_Phase4_implement_plan_Antigravity.md`（實作前已修正 5 個問題，見該文件 §2/§3 的 RESOLVED 段落，`9ade99c`）。
 
@@ -102,7 +102,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - [x] 3.5 使用記錄寫入 `example_usage_log`（T-Q18）
 - [x] 3.6 引用模式（anonymous/attributed）接進最終回覆組裝（T-Q20，`app/routers/chat.py` 的 `ATTRIBUTION_TAG`）
 
-**完成判準**：治療師新增一則範例＋條件，符合條件的對話回覆風格明顯貼近範例。 ✅ 選取／注入／記錄／引用的邏輯已實作，`tests/test_phase3_examples.py` 在本機 Docker Postgres 全過（無 DB 時 19 項單元測試照跑，DB 整合測試 6 項）；全套 `pytest tests/` 201 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**仍未驗證的部分**：(1)「回覆風格明顯貼近範例」需要真的 Azure OpenAI 跑過才能主觀判斷，自動化測試 mock 了 LLM，只驗證範例有正確進入 prompt；(2) ~~merge 前必須先在正式環境跑 `5c3e9a1f7d20` migration~~ ✅ **2026-10-02 已完成**：正式環境資料庫已從 Supabase 換成 **Neon**，Neon 目前停在 `5c3e9a1f7d20`（head），與本地 `migrations/versions` 最新版本一致，merge 前置條件已滿足。正式環境上的 Admin API / 範例注入實際打一次仍待 merge 部署後驗證。
+**完成判準**：治療師新增一則範例＋條件，符合條件的對話回覆風格明顯貼近範例。 ✅ 選取／注入／記錄／引用的邏輯已實作，`tests/test_phase3_examples.py` 在本機 Docker Postgres 全過（無 DB 時 19 項單元測試照跑，DB 整合測試 6 項）；全套 `pytest tests/` 201 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**仍未驗證的部分**：(1)「回覆風格明顯貼近範例」需要真的 Azure OpenAI 跑過才能主觀判斷，自動化測試 mock 了 LLM，只驗證範例有正確進入 prompt；(2) ~~merge 前必須先在正式環境跑 `5c3e9a1f7d20` migration~~ ✅ **2026-10-02 已完成**：正式環境資料庫已從 Supabase 換成 **Neon**，Neon 目前停在 `5c3e9a1f7d20`（head），與本地 `migrations/versions` 最新版本一致，merge 前置條件已滿足。**正式環境驗證（merge 後）**：用唯一的測試專用主題建立暫時範例，`/chat` 回 200，Neon 的 `example_usage_log` 有記錄到對應的 assistant message。「回覆風格明顯貼近範例」仍屬主觀判斷，尚未由治療師評估。
 
 **實作筆記（與計畫文件的差異）**：
 - **`app/core/llm_client.py` 也要改**：計畫只列了 `chat.py` 和 `build_prompt()`，但 `chat.py` 是透過 `chat_with_llm()` 間接呼叫 `build_prompt()`，所以 `chat_with_llm()` 也加了 `examples` 參數往下傳。
@@ -119,17 +119,64 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 ---
 
-## Phase 4 — Rule Engine（T-Q1–T-Q5）
+## Phase 4 — Rule Engine（T-Q1–T-Q5）✅ 程式碼完成（2026-10-06，`upgrade/phase4`，尚未 merge）
 > 目標：規則統一調度 Persona + Example + 療法/語氣設定。
 
-- [ ] 4.1 Migration：`rules`, `rule_versions`
-- [ ] 4.2 條件比對引擎（Python，比對 `conditions_json` vs profile/topics/risk/history）
-- [ ] 4.3 CRUD API + 每次變更寫 `rule_versions`（T-Q8 先做基礎版本，Phase 5 補審核流程）
-- [ ] 4.4 優先級排序、多規則衝突取最高優先（T-Q4）
-- [ ] 4.5 `scope` 生效範圍邏輯：new_conversations_only vs immediate（T-Q5）
-- [ ] 4.6 Rule action 接進 Context Assembly：覆寫 persona / 帶入 example_ids / 設定 therapy+tone
+- [x] 4.1 Migration：`rules`, `rule_versions`；`messages.rule_id` 補 FK、新增 `messages.rule_version_id`、`messages.output_replaced`；版本判定用的 `rule_versions.created_xact`、`sessions.rule_snapshot`
+- [x] 4.2 條件比對引擎（Python，比對 `conditions_json` vs profile/topics/risk）
+- [x] 4.3 CRUD API + 每次變更寫 `rule_versions`（T-Q8 先做基礎版本，Phase 5 補審核流程）
+- [x] 4.4 優先級排序、多規則衝突取最高優先（T-Q4）
+- [x] 4.5 `scope` 生效範圍邏輯：new_conversations_only vs immediate（T-Q5）
+- [x] 4.6 Rule action 接進 Context Assembly：覆寫 persona / 帶入 example_ids / 設定 therapy+tone
 
-**完成判準**：新增一條規則（如原文件範例：社交焦慮+low risk+第3次），命中時可觀察到 ACT 語氣、溫暖接納風格的回覆。
+**完成判準**：新增一條規則（焦慮 + low risk + 第 3 次），命中時可觀察到 ACT 語氣、溫暖接納風格的回覆。實際寫法為 `{"topics_include": ["Anxiety"], "risk_level": "low", "min_topic_mentions": 3}`。原文件範例是「社交焦慮」，但主題只能用 `STANDARD_CLINICAL_TOPICS` 裡的英文名稱，`Anxiety` 比社交焦慮廣，所以判準直接稱為「焦慮」，不宣稱能區分社交焦慮。
+
+**開工前的設計決策（2026-10-05 與使用者確認）**：
+
+1. **條件（rules-only 驗證模式）**：`validate_condition_json(..., mode="rule")` 額外接受 `risk_level` 與 `min_topic_mentions`；persona / example 的條件格式不變（仍只接受 `year_of_study`、`topics_include`）。
+   - `risk_level`：`none|low|medium|high` 之一，比對 Phase 2 由 LLM 推論（或使用者更正）的 `user_profiles.risk_level`。**這不是 Phase 6 的危機分級**，Phase 6 上線後再評估是否加新條件鍵。
+   - `min_topic_mentions`：正整數，**必須搭配 `topics_include`**；省略時沿用 `EVOLVED_TOPIC_THRESHOLD`（3）。`topics_include` 中**任一主題**自身次數達門檻即成立，不同主題的次數不合計。
+   - 次數是對話結束後的 post-processing 才累加，所以「第 3 次提到」那一輪不會命中，**累積滿 3 次後的下一輪**才觸發。
+   - `history_therapy_used` 延後：目前沒有記錄學生用過哪些療法的資料。
+   - rules 模式下 `topics_include` 只接受 `STANDARD_CLINICAL_TOPICS`（Profile 分類只會寫入這份英文清單，例如 `社交焦慮` 永遠不會命中），清單外的主題直接 422。
+   - 比對需要逐主題的次數（`min_topic_mentions` 可以小於 3），不能只用「已演化主題」集合；persona / example 的比對行為維持不變。
+2. **Action 格式**：`therapy`、`tone`（非空字串）、`persona_id`（必須存在的 persona）、`example_ids`（必須存在的範例 id 陣列），至少一個鍵。
+3. **Persona 優先序**：治療師手動指派 > 命中規則的 `persona_id` > `persona_match_conditions` 自動匹配 > 預設。手動指派只鎖住 persona；規則的 `therapy` / `tone` 對手動指派的學生仍然生效。
+4. **Therapy / tone 注入**：獨立的「本輪策略」prompt 區塊，放在 `context_blocks`（`SAFETY_CORE` 之前），不改寫 persona 片段；`SAFETY_CORE` 與三層安全閘門維持最高優先。
+5. **版本與 `scope`**：每次變更（建立、修改、啟用、封存、回滾）在**同一筆 transaction** 更新 `rules` 並寫一筆 `rule_versions` 快照；`scope` 與 `status` 都是快照的一部分。
+   - **先選版本，再看狀態**：適用版本 = 符合下列任一條件、同一條規則中 `version_number` 最大的一筆版本（「最新」一律依 `version_number` 判斷）——快照 `status = archived`（封存視為立即生效的停用版本，不論快照的 `scope`）、快照 `scope = immediate`、或該版本在 session 開始時已經存在（見下方「版本是否已存在」）。選出後**該版本的** `status` 是 `active` 才套用；找不到適用版本也不套用。**不能先篩選 active 再選版本**，否則會跳過停用版本、重新選中更舊的 active 版本。
+   - 必測案例：v1 active → v2 archived → v3 active（`new_conversations_only`）：在 v2 之前開始的舊 session 維持停用（選中 v2），v3 之後的新 session 用 v3。另測一般混合 scope 歷史。
+   - 改回 `draft` 等非 active 狀態跟其他修改一樣依該版本的 `scope` 生效。
+   - **首輪也要有判定基準**：目前 `get_history()` 找不到 session 時回空清單，session 要到回覆後 `append()` 才建立。`ConversationStore` 新增 `ensure_session()`（Postgres 版 get-or-create，快照由 server default 記下；InMemory 版不做事），`/chat` 通過 L1 安全檢查後、Rule Engine 之前先呼叫，快照才會早於首輪查詢，首輪與之後各輪判定一致。
+   - `new_conversations_only`：進行中的 session 沿用 session 開始時的版本，新 session 用新版；session 開始後才建立的規則不套用到該 session。
+   - `immediate`：進行中的 session 下一輪就用新版，不影響正在生成的回覆。
+   - 固定的是規則版本，不是命中結果：每輪仍依當下 profile 重新比對。
+   - **封存一律立即停用**，不論 `scope`。
+   - **版本是否已存在（2026-10-06 修正，原本比較時間戳）**：`rule_versions.created_xact` 記錄寫入版本的 transaction id（`pg_current_xact_id()`），`sessions.rule_snapshot` 記錄建立 session 那個 INSERT 當下的資料庫快照（`pg_current_snapshot()`），兩者都是 server default；`pg_visible_in_snapshot(created_xact, rule_snapshot)` 為 true 才代表版本在 session 開始前已 commit。原本的 `created_at <= sessions.started_at` 有並行問題（review 時在本機重現）：`now()` 是 transaction 開始時間，等待 row lock 或尚未 commit 的更新會拿到比 session 更早的時間戳，session 開始時看不到的 `new_conversations_only` 版本，下一輪卻被誤用。快照判定的是「session 開始時哪些 transaction 已經 commit」，沒有這個時間窗。migration 之前就存在的 session：`ADD COLUMN … DEFAULT` 會填入 migration 當下的快照（不是 NULL，review 時在本機確認），規則表在同一個 migration 才建立，之後的任何版本都不在這個快照裡，所以一樣視為任何版本都不存在。
+   - 適用版本由上述判定推導、並記在每則回覆的 `messages.rule_version_id`；session 只多記一個快照，不另建 session 鎖定表（2026-10-05 使用者確認不建鎖定表）。Phase 4 先不做 in-process cache（Vercel serverless + `NullPool`，跨 invocation 的快取不可靠），每輪直接查詢；延遲成為問題時再加只存「最新規則 + 版本識別」的快取（2026-10-05 使用者確認延後）。
+   - 「新對話」= 新的 `sessions` 列。目前前端每次載入頁面或 reset 都產生新的 `session_id`，且每個 `session_id` 對應一個新的匿名 user（Phase 1 記錄的身份綁定限制），所以「累積 3 次」只能在同一個瀏覽器 session 內達成。
+6. **規則衝突**：命中多條時取 `priority` 最高，再依 `created_at`、`id` 做決定性的 tie-break（同 Phase 3）。
+7. **範例合併**：規則指定的範例優先（依 `example_ids` 順序、去重、只用 `active`、不再檢查範例自身的條件），自動匹配補足，總上限 `EXAMPLE_MATCH_LIMIT`（2）。已封存的範例一律不選，包括舊規則引用的。
+8. **狀態**：Phase 4 允許授權管理者經 API 直接 `draft → active`，啟用前驗證條件、action 與引用對象（persona、範例）。Phase 5 加審核流程，Phase 8 再補真正的帳號與角色權限。
+   - **最低限度授權**：所有 admin **寫入**端點要求 `X-Admin-Key` header 等於環境變數 `ADMIN_API_KEY`（`hmac.compare_digest` 比對）；未設定時一律拒絕（fail closed）。`.env.example` 補上說明，測試明確設定這個值。
+   - 範圍不只規則：規則會引用 persona 與範例，只保護規則端點的話，未授權者仍可修改被引用的範例內容。所以同一個驗證也套用到既有的 `POST /examples`、`PATCH /examples/{id}`、`POST /personas`、`PATCH /personas/{id}/activate`、`POST /personas/assign`（讀取端點維持現狀）。這會改變既有端點行為，對應測試要補 header。
+9. **每輪紀錄**：assistant message 寫入 `rule_id` 與 `rule_version_id`；L3 Output Gateway 替換回覆時仍記錄規則（規則確實用於生成），但標記 `output_replaced = true`，統計規則成效時排除，避免誤算。
+10. **失敗處理**：Rule Engine 跟 Example Selector 一樣 fail-open，查詢出錯時記 log、視為沒有命中規則，`/chat` 不因此 500。合併後的範例清單同時用於 prompt、引用標記判斷與 `log_example_usage()`。
+
+**Merge 前的硬性前置條件**（比 Phase 3 更嚴格）：
+- **先在 Neon 跑 Phase 4 migration**：Phase 4 在 `messages` 加了欄位，ORM 每次 INSERT 都會帶上這些欄位；程式碼若比 migration 先上 Vercel，所有會寫 messages 的 `/chat` 都會 500，fail-open 救不了。新欄位預計都是 nullable 或有預設值，但這只是設計意圖、**不等於已驗證**：migration 寫好後，要在本機 Docker Postgres 套用 Phase 4 migration，再用 `main` 的程式碼（不含 Phase 4）跑 `pytest tests/` 並實際打 `/chat`，確認舊版程式在新 schema 上正常，才能先套用到 Neon。
+- **在 Vercel 設定 `ADMIN_API_KEY`**：否則 fail-closed 的寫入端點會讓正式環境無法建立任何規則，既有的 persona／範例／指派寫入也會一起失效。
+
+**實作狀態（2026-10-06）**：4.1–4.6 已實作，`tests/test_phase4_rules.py` 在本機 Docker Postgres 全過（無 DB 時 29 項單元測試照跑，DB 整合測試 7 項，含 v1 active → v2 archived → v3 的端到端案例，以及「v2 在 session 開始前開始寫、開始後才 commit」的並行案例——已確認改回時間戳判定時這個測試會失敗）；全套 `pytest tests/` 237 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**Migration 相容舊版程式已驗證**（含快照欄位的最終版 migration）：本機套用 `6d55b7146dcc` 後，在 `main`（`764cf1e`）的 worktree 跑 `pytest tests/`（201 passed）、`test_phase1_e2e.py`，並實際打一次 `/chat`（真的 Azure OpenAI，HTTP 200，session 由 server default 記下快照，兩則 message 正常寫入、`output_replaced` 預設 false），驗證後已刪除測試資料。**仍未驗證的部分**：(1)「命中時可觀察到 ACT 語氣、溫暖接納風格」需要真的 Azure OpenAI 由人判斷，自動化測試 mock 了 LLM，只驗證策略正確進入 prompt；(2) 尚未在 Neon 套用 migration、尚未設定 Vercel `ADMIN_API_KEY`（見上方硬性前置條件）。
+
+**實作筆記（與計畫的差異與補充）**：
+- `ensure_session()` 也會順便建立匿名 user，所以首輪起 Example Selector 就查得到 user（profile 是空的，不會命中任何範例，行為不變）。LLM 呼叫失敗（503）時會留下沒有 message 的 session 列，不影響後續對話。
+- `persona_switch_log` 的第一筆（`None → persona`）從第 2 輪提前到第 1 輪：session 現在首輪就存在，`record_persona_usage()` 不再因找不到 session 而略過。筆數不變，只是時間點提早。
+- 每輪多了 `ensure_session()`（session 已存在時只是一次查詢），以及 Rule Engine 對 users / rules+rule_versions+sessions / profile / topics 的查詢（第四次獨立查 users，跟 Phase 2/3 記錄的已知取捨同類）。Rule Engine 先略過目前狀態為 `archived` 的規則（最新版本必為封存快照、必定停用），`draft` 不能略過（舊 session 可能仍適用更早的 active 版本）。
+- Admin API：`GET /rules`、`GET /rules/{id}/versions`（讀取不需要 key）；`POST /rules`、`PATCH /rules/{id}`（需要 key）。`PATCH` 用 `SELECT … FOR NO KEY UPDATE` 鎖住規則，避免並行修改撞 `version_number`。不用 `FOR UPDATE`：它會擋住 `messages.rule_id` 外鍵檢查的 KEY SHARE 鎖，管理者修改規則期間，命中這條規則的 `/chat` 寫 message 時都要等（寫並行測試時實際卡住才發現）；驗證失敗的修改不會留下版本。`in_review` 保留給 Phase 5，API 不接受；回滾（5.4）尚未提供，但快照已完整。
+- 引用驗證：persona / 範例必須存在；結果狀態是 `active` 時還必須都是 active。因此 active 規則引用的範例被封存後，再修改這條規則（例如調 priority）會被 422 擋下，要先移除該範例或改成 draft。
+- `validate_condition_json()` 加了 `mode` 參數；`admin_examples.py` 原本直接把它當 pydantic validator 傳入，pydantic 會把第二個參數誤當成 `ValidationInfo`，所以改成明確的 classmethod 包一層。
+- `test_phase1_e2e.py` 呼叫指派 API 時改帶 `X-Admin-Key`（未設定 `ADMIN_API_KEY` 時用測試專用值）；`tests/test_phase3_examples.py` 同樣補 key，並讓假的 Example Selector 接受新的 `pinned_example_ids` 參數。
 
 ---
 
@@ -196,7 +243,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**（2026-10-02 更新）：Phase 0、Phase 1、Phase 2 皆已完成並 merge 進 `main`（PR #1、PR #2）。**正式環境資料庫已從 Supabase 換成 Neon**（配套 hotfix：`hotfix/neon-bare-scheme`、`hotfix/missing-greenlet`，皆已 merge 進 `main`，並已 merge 進 `upgrade/phase3`），Neon schema 已在 head `5c3e9a1f7d20`，涵蓋 Phase 0–3 全部 migration。目前工作分支為 `upgrade/phase3`（範例庫），程式碼完成、本機 Docker Postgres 測試全過，正式環境 migration 已就位，**可以 push、開 PR、merge 進 `main`**。仍待補的正式環境驗證：Phase 1 persona 指派 API、Phase 2 profile/摘要流程、Phase 3 Admin API 與範例注入，各實際打一次。
+5. **目前狀態**（2026-10-06 更新）：Phase 0–3 皆已完成並 merge 進 `main`（PR #1–#3），並已在 Neon 正式環境驗證。目前工作分支為 `upgrade/phase4`（Rule Engine），4.1–4.6 程式碼完成、本機 Docker Postgres 測試全過，尚未 push、尚未 merge。**merge 前必須先在 Neon 套用 `6d55b7146dcc`，並在 Vercel 設定 `ADMIN_API_KEY`**（見 Phase 4 硬性前置條件）。
 
 ### ⚠️ 上線後的 Hotfix 記錄（Phase 0 資料庫連線層，2026-08-12）
 

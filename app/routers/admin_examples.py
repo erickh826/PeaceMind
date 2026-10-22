@@ -6,6 +6,9 @@ Admin API — 範例庫管理（Phase 3，T-Q16–T-Q20）
 不帶則落到 migration cbda7ba4a1c9 種入的 placeholder therapist——不會驗證權限，
 僅供後端/測試驗證邏輯用，正式上線前必須加上真實 auth。
 
+Phase 4 起寫入端點（建立、修改）要求 X-Admin-Key（app/core/admin_auth.py）：規則會
+引用範例，未授權者不該能改被引用的內容。這是 Phase 8 之前的最低限度保護。
+
 需要 DATABASE_URL 已設定才能使用（沒接 DB 時 Example Selector 一律回傳空結果，
 這些端點回 503）。
 """
@@ -16,9 +19,11 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
+
+from app.core.admin_auth import require_admin_key
 
 from app.core.condition_matching import validate_condition_json
 
@@ -56,7 +61,10 @@ class ExampleCreateRequest(BaseModel):
     attribution_mode: AttributionMode = "anonymous"
     created_by: str | None = None  # therapist_id（暫時，見檔案頂端說明）
 
-    _check_conditions = field_validator("applicable_conditions_json")(validate_condition_json)
+    @field_validator("applicable_conditions_json")
+    @classmethod
+    def _check_conditions(cls, value: dict) -> dict:
+        return validate_condition_json(value)
 
 
 class ExampleUpdateRequest(BaseModel):
@@ -106,7 +114,7 @@ async def list_examples(status: ExampleStatus | None = None):
         return [_to_out(r) for r in result.scalars().all()]
 
 
-@router.post("/examples", response_model=ExampleOut)
+@router.post("/examples", response_model=ExampleOut, dependencies=[Depends(require_admin_key)])
 async def create_example(request: ExampleCreateRequest):
     """新增範例，建立後即為 active（範例只影響語氣/措辭參考，不需要 persona 那樣的 draft 流程）。"""
     _require_db()
@@ -134,7 +142,7 @@ async def create_example(request: ExampleCreateRequest):
         return _to_out(example)
 
 
-@router.patch("/examples/{example_id}", response_model=ExampleOut)
+@router.patch("/examples/{example_id}", response_model=ExampleOut, dependencies=[Depends(require_admin_key)])
 async def update_example(example_id: str, request: ExampleUpdateRequest):
     _require_db()
     from app.db import get_session

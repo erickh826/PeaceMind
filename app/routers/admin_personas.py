@@ -6,6 +6,9 @@ Admin API — Persona 管理（Phase 1）
 不會驗證這個 id 是否真的有權限——僅供後端/測試驗證邏輯用，正式上線前
 必須加上真實 auth，否則任何人都能呼叫這些端點。
 
+Phase 4 起寫入端點（建立、啟用、指派）要求 X-Admin-Key（app/core/admin_auth.py），
+這是 Phase 8 之前的最低限度保護，不是角色權限。
+
 需要 DATABASE_URL 已設定才能使用（沒接 DB 時，Persona 系統整體退回
 resolve_persona() 內建的 fallback，這些端點會回 503）。
 """
@@ -14,9 +17,11 @@ from __future__ import annotations
 import os
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+
+from app.core.admin_auth import require_admin_key
 
 router = APIRouter()
 
@@ -76,7 +81,7 @@ async def list_personas():
         ]
 
 
-@router.post("/personas", response_model=PersonaOut)
+@router.post("/personas", response_model=PersonaOut, dependencies=[Depends(require_admin_key)])
 async def create_persona(request: PersonaCreateRequest):
     """新增一個 draft persona。需另外呼叫 /personas/{id}/activate 才會生效。"""
     _require_db()
@@ -106,7 +111,7 @@ async def create_persona(request: PersonaCreateRequest):
         )
 
 
-@router.patch("/personas/{persona_id}/activate", response_model=PersonaOut)
+@router.patch("/personas/{persona_id}/activate", response_model=PersonaOut, dependencies=[Depends(require_admin_key)])
 async def activate_persona(persona_id: str):
     _require_db()
     from app.db import get_session
@@ -127,7 +132,7 @@ async def activate_persona(persona_id: str):
         )
 
 
-@router.post("/personas/assign")
+@router.post("/personas/assign", dependencies=[Depends(require_admin_key)])
 async def assign_persona(request: PersonaAssignRequest):
     """
     治療師手動指派 persona 給特定學生（T-Q15），覆寫自動匹配。

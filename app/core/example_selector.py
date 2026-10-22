@@ -13,6 +13,10 @@ tie-break（同一個 transaction 種入的多筆範例 created_at 會相同，�
 transaction 開始時間）。最多取 EXAMPLE_MATCH_LIMIT 則，避免 prompt 過長、稀釋
 每則範例的影響力。
 
+Phase 4：命中規則的 action_json.example_ids 優先（依 id 順序、去重、只用 active、
+不再檢查範例自身的 applicable_conditions_json），自動匹配補足剩下的名額，總上限
+仍是 EXAMPLE_MATCH_LIMIT。已封存的範例一律不選，包括舊規則引用的。
+
 DATABASE_URL 未設定、沒有 session_id、或該 session 還沒有對應 User 記錄時，
 回傳空結果，不阻擋對話。查詢出錯（例如程式已部署但 Phase 3 migration 還沒套用到
 該環境的資料庫）也 fail-open 回傳空結果——範例只是回覆品質的加強，不是安全層，
@@ -56,18 +60,33 @@ class ExampleSelection:
 EMPTY_SELECTION = ExampleSelection()
 
 
-async def select_applicable_examples(session_client_key: str | None) -> ExampleSelection:
+async def select_applicable_examples(
+    session_client_key: str | None, pinned_example_ids: list[str] | None = None
+) -> ExampleSelection:
     if not os.environ.get("DATABASE_URL") or not session_client_key:
         return EMPTY_SELECTION
 
     try:
-        return await _select(session_client_key)
+        return await _select(session_client_key, pinned_example_ids or [])
     except Exception:
         logger.exception("example selection failed, continuing without examples | session=%s", session_client_key)
         return EMPTY_SELECTION
 
 
-async def _select(session_client_key: str) -> ExampleSelection:
+def _pinned_uuids(pinned_example_ids: list[str]) -> list[uuid.UUID]:
+    """依原順序去重；格式錯誤的 id 略過（規則建立時已驗證，這裡只是保險）。"""
+    seen: list[uuid.UUID] = []
+    for raw in pinned_example_ids:
+        try:
+            value = uuid.UUID(str(raw))
+        except ValueError:
+            continue
+        if value not in seen:
+            seen.append(value)
+    return seen
+
+
+async def _select(session_client_key: str, pinned_example_ids: list[str]) -> ExampleSelection:
     from sqlalchemy import select
 
     from app.db import get_session
@@ -93,15 +112,23 @@ async def _select(session_client_key: str) -> ExampleSelection:
         examples_result = await db.execute(
             select(ResponseExample).where(ResponseExample.status == "active")
         )
+        active_examples = examples_result.scalars().all()
+        active_by_id = {ex.id: ex for ex in active_examples}
+
+        pinned = [active_by_id[i] for i in _pinned_uuids(pinned_example_ids) if i in active_by_id]
+        pinned_ids = {ex.id for ex in pinned}
+
         matched = [
             ex
-            for ex in examples_result.scalars().all()
-            if condition_matches(ex.applicable_conditions_json, profile_row, evolved_topics)
+            for ex in active_examples
+            if ex.id not in pinned_ids
+            and condition_matches(ex.applicable_conditions_json, profile_row, evolved_topics)
         ]
         matched.sort(
             key=lambda ex: (len(ex.applicable_conditions_json), ex.created_at, str(ex.id)),
             reverse=True,
         )
+        chosen = (pinned + matched)[:EXAMPLE_MATCH_LIMIT]
 
         return ExampleSelection(
             user_id=str(user_row.id),
@@ -112,7 +139,7 @@ async def _select(session_client_key: str) -> ExampleSelection:
                     usage_mode=ex.usage_mode,
                     attribution_mode=ex.attribution_mode,
                 )
-                for ex in matched[:EXAMPLE_MATCH_LIMIT]
+                for ex in chosen
             ],
         )
 
