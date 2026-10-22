@@ -188,7 +188,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 ---
 
-## Phase 5 — Human-in-the-loop（T-Q6–T-Q10）
+## Phase 5 — Human-in-the-loop（T-Q6–T-Q10）✅ 完成（PR #5 已 merge，`856d9ed`；2026-10-22 已在 Neon 正式環境驗證）
 > 目標：沙盒測試、審核工作流、手動覆寫、回饋標籤。
 
 - [x] 5.1 沙盒測試 API：`POST /api/v1/admin/rules/{id}/test`（不寫入正式 session）
@@ -200,7 +200,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 **完成判準**：治療師能在沙盒驗證規則效果，走完「提交審核→核准→上線」流程，並能回滾到前一版本。
 
-### Phase 5 實作筆記（`upgrade/phase5`，尚未 merge）
+### Phase 5 實作筆記
 
 **設計決定**
 - **身份**：沒有治療師登入，`submitted_by` / `reviewer_id` / `changed_by` 由 body 自報；系統驗證該治療師存在、雙人模式下 reviewer 角色須為 `senior_therapist` 或 `admin` 且 ≠ 提交者。**這只擋得了誤操作，擋不了冒名**，真正保證要等 Phase 8。為此新增 `POST/GET /admin/therapists`（需 key）。
@@ -216,7 +216,18 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - 先在 Neon 跑 `alembic upgrade head`（只新增表，舊程式不受影響）再部署。
 - 預設 dual：上線後 draft→active 需要第二位 senior/admin 治療師（用 `POST /admin/therapists` 建立），或在 Vercel 設 `RULE_REVIEW_MODE=single`。
 
-**測試**：`tests/test_phase5_hitl.py`（舊的 `tests/test_phase5.py` 是安全層測試，不動）；在本機 Docker Postgres 跑過 dual 端到端與 single 模式。
+**測試**：`tests/test_phase5_hitl.py`（舊的 `tests/test_phase5.py` 是安全層測試，不動）；在本機 Docker Postgres 跑過 dual 端到端與 single 模式。全套（排除舊 `test_phase5.py`）237 passed、1 xfailed。Migration 相容舊版程式已驗證：本機套用 `8b3f1d9a2c47` 後，`main`（`bd83645`）的測試 216 passed；另外手動驗證帶有覆寫與標籤的 session 被 `/reset` 刪除時，訊息、覆寫、標籤一併刪除。
+
+**上線記錄（2026-10-22）**：
+- Merge 前：Neon 從 `6d55b7146dcc` 升到 `8b3f1d9a2c47`（head），四張新表欄位數與 migration 一致、`uq_rule_review_pending` 存在、兩個指向 messages 的 FK 為 CASCADE；舊版 `main` 在新 schema 上打 `/chat` 200（session `smoke-prephase5-20261022`）。Vercel 不設定 `RULE_REVIEW_MODE`（預設 dual）。
+- PR #5 merge（`856d9ed`）後兩個 Vercel 部署皆 success。
+- 正式環境驗證：會回傳對話內容或會寫入的新端點（`sessions`、`messages`、`overrides`、`feedback-tags`、`therapists`、`test-runs`、`test`、`submit-review`、`rollback`、`override`）不帶 key 皆 401；`GET /rules`、`GET /review-requests` 公開 200；帶 key 直接建立 active 規則回 409（確認 dual 生效，沒有寫入任何資料）；merge 後 `/chat` 200（session `smoke-postphase5-20261022`）。
+- 沒有在正式環境呼叫沙盒（會打真的 LLM 並寫入 `rule_test_runs`）。正式環境要啟用規則前，需要先用 `POST /admin/therapists` 建立第二位 `senior_therapist` / `admin`。
+
+**已知小問題 → 已在 `hotfix/phase5-review-followups` 修正**：
+1. 雙人模式下回滾只允許目前是 `active` 的規則（draft / in_review 回 409）；單人模式不變。
+2. 回滾後送審若沒指定 scope，預設回到回滾前那個版本的 scope（以版本備註 `回滾到 v` 辨識）。沙盒測試套用同一個預設（共用 `_proposed_content()`），否則沙盒的指紋跟送審對不上，回滾後「測過再送審」會一直被 409 擋下。
+3. 「已測過」的指紋現在包含規則引用的 persona 文字與範例內容（`reference_texts`）；測試後這些被改過，送審需重新測試。注意：核准時不會重新比對這個指紋。
 
 ---
 
@@ -269,7 +280,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**（2026-10-22 更新）：Phase 0–4 皆已完成並 merge 進 `main`（PR #1–#4），並已在 Neon 正式環境驗證。下一步是從 `main` 開 `upgrade/phase5`（Human-in-the-loop）。
+5. **目前狀態**（2026-10-22 更新）：Phase 0–5 皆已完成並 merge 進 `main`（PR #1–#5），並已在 Neon 正式環境驗證。Phase 5 有三個已知小問題待修（見 Phase 5 實作筆記），之後是 Phase 6（危機分層）。
 
 ### ⚠️ 上線後的 Hotfix 記錄（Phase 0 資料庫連線層，2026-08-12）
 

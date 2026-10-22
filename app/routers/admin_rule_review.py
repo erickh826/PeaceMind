@@ -29,7 +29,7 @@ from sqlalchemy import func, select
 from app.core.admin_auth import require_admin_key
 from app.core.condition_matching import validate_condition_json
 from app.core.rule_review import REVIEWER_ROLES, content_hash, content_of, get_review_mode
-from app.core.rule_sandbox import run_sandbox, simulate_profile_match
+from app.core.rule_sandbox import reference_texts, run_sandbox, simulate_profile_match
 from app.routers.admin_rules import (
     RuleOut, RuleScope, _check_references, _parse_uuid, _require_db, _to_out,
     _write_version, supersede_pending_requests, validate_action_json,
@@ -66,6 +66,19 @@ def _effective_content(rule, overlay: ConfigOverlay | None) -> dict:
     content = content_of(rule.snapshot())
     if overlay is not None:
         content.update(overlay.model_dump(exclude_none=True))
+    return content
+
+
+async def _proposed_content(db, rule, overlay: ConfigOverlay | None) -> dict:
+    """
+    沙盒與送審共用：沒指定 scope 且規則剛回滾過時，scope 預設回到回滾前的值。
+    兩邊必須用同一份邏輯，否則沙盒算出的指紋跟送審的對不上，測過也送不了審。
+    """
+    content = _effective_content(rule, overlay)
+    if overlay is None or overlay.scope is None:
+        restored = await _pre_rollback_scope(db, rule)
+        if restored is not None:
+            content["scope"] = restored
     return content
 
 
@@ -204,7 +217,7 @@ async def test_rule(rule_id: str, request: RuleTestRequest):
         if recent >= _max_runs_per_hour():
             raise HTTPException(status_code=429, detail="沙盒測試次數已達每小時上限，請稍後再試")
 
-        content = _effective_content(rule, request.config)
+        content = await _proposed_content(db, rule, request.config)
         # 測試 draft 時引用的 persona / 範例可能還沒 active，只檢查存在
         await _check_references(db, content["action_json"], activating=False)
         version = await _latest_version(db, rule.id)
@@ -226,7 +239,8 @@ async def test_rule(rule_id: str, request: RuleTestRequest):
 
         run = RuleTestRun(
             rule_id=rule.id, rule_version_id=version.id if version else None,
-            snapshot_hash=content_hash(content), draft_config_json=content,
+            snapshot_hash=content_hash(content, await reference_texts(db, content["action_json"])),
+            draft_config_json=content,
             turns_json=turns, sample_input=turns[-1]["content"],
             generated_output=result.output, safety_outcome=result.safety_outcome,
             simulated_profile_json=profile.model_dump() if profile else None,
@@ -242,6 +256,24 @@ async def test_rule(rule_id: str, request: RuleTestRequest):
             example_ids=result.example_ids, profile_match=matched, profile_match_detail=detail,
             tested_at=run.tested_at,
         )
+
+
+ROLLBACK_NOTE_PREFIX = "回滾到 v"
+
+
+async def _pre_rollback_scope(db, rule) -> str | None:
+    """最新版本若是回滾產生的，回傳回滾前那個版本的 scope；否則 None。"""
+    from app.db.models_rule import RuleVersion
+
+    latest = await _latest_version(db, rule.id)
+    if latest is None or not (latest.change_note or "").startswith(ROLLBACK_NOTE_PREFIX):
+        return None
+    previous = await db.scalar(
+        select(RuleVersion).where(
+            RuleVersion.rule_id == rule.id, RuleVersion.version_number == latest.version_number - 1
+        )
+    )
+    return previous.snapshot_json.get("scope") if previous else None
 
 
 async def _tester_id(db, tested_by: str | None) -> uuid.UUID:
@@ -359,12 +391,12 @@ async def submit_review(rule_id: str, request: SubmitReviewRequest):
         if pending is not None:
             raise HTTPException(status_code=409, detail="這條規則已經有待審的申請")
 
-        content = _effective_content(rule, request.proposed)
+        content = await _proposed_content(db, rule, request.proposed)
         if rule.status == "active" and content == content_of(rule.snapshot()):
             raise HTTPException(status_code=422, detail="提議的內容跟目前 active 的內容相同，沒有要審核的修改")
         await _check_references(db, content["action_json"], activating=True)
 
-        proposed_hash = content_hash(content)
+        proposed_hash = content_hash(content, await reference_texts(db, content["action_json"]))
         if get_review_mode() == "dual":
             tested = await db.scalar(
                 select(RuleTestRun.id)
@@ -554,6 +586,10 @@ async def rollback_rule(rule_id: str, request: RollbackRequest):
             raise HTTPException(
                 status_code=409, detail="已封存的規則不能回滾（回滾等於重新啟用，會繞過審核）"
             )
+        if rule.status != "active" and get_review_mode() == "dual":
+            raise HTTPException(
+                status_code=409, detail="雙人審核模式下只能回滾目前是 active 的規則（draft／審核中的規則請走審核）"
+            )
 
         versions = (
             await db.execute(
@@ -598,7 +634,7 @@ async def rollback_rule(rule_id: str, request: RollbackRequest):
         rule.status = "active"
         rule.updated_at = func.now()
         version_number = await _write_version(
-            db, rule, actor.id, f"回滾到 v{target.version_number}：{request.reason}"
+            db, rule, actor.id, f"{ROLLBACK_NOTE_PREFIX}{target.version_number}：{request.reason}"
         )
         await supersede_pending_requests(db, rule.id, "stale", "規則已回滾，申請失效")
         await db.commit()
