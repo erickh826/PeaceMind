@@ -119,7 +119,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 
 ---
 
-## Phase 4 — Rule Engine（T-Q1–T-Q5）✅ 程式碼完成（2026-10-06，`upgrade/phase4`，尚未 merge）
+## Phase 4 — Rule Engine（T-Q1–T-Q5）✅ 完成（PR #4 已 merge，`bd83645`；2026-10-22 已在 Neon 正式環境驗證）
 > 目標：規則統一調度 Persona + Example + 療法/語氣設定。
 
 - [x] 4.1 Migration：`rules`, `rule_versions`；`messages.rule_id` 補 FK、新增 `messages.rule_version_id`、`messages.output_replaced`；版本判定用的 `rule_versions.created_xact`、`sessions.rule_snapshot`
@@ -167,7 +167,15 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - **先在 Neon 跑 Phase 4 migration**：Phase 4 在 `messages` 加了欄位，ORM 每次 INSERT 都會帶上這些欄位；程式碼若比 migration 先上 Vercel，所有會寫 messages 的 `/chat` 都會 500，fail-open 救不了。新欄位預計都是 nullable 或有預設值，但這只是設計意圖、**不等於已驗證**：migration 寫好後，要在本機 Docker Postgres 套用 Phase 4 migration，再用 `main` 的程式碼（不含 Phase 4）跑 `pytest tests/` 並實際打 `/chat`，確認舊版程式在新 schema 上正常，才能先套用到 Neon。
 - **在 Vercel 設定 `ADMIN_API_KEY`**：否則 fail-closed 的寫入端點會讓正式環境無法建立任何規則，既有的 persona／範例／指派寫入也會一起失效。
 
-**實作狀態（2026-10-06）**：4.1–4.6 已實作，`tests/test_phase4_rules.py` 在本機 Docker Postgres 全過（無 DB 時 29 項單元測試照跑，DB 整合測試 7 項，含 v1 active → v2 archived → v3 的端到端案例，以及「v2 在 session 開始前開始寫、開始後才 commit」的並行案例——已確認改回時間戳判定時這個測試會失敗）；全套 `pytest tests/` 237 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**Migration 相容舊版程式已驗證**（含快照欄位的最終版 migration）：本機套用 `6d55b7146dcc` 後，在 `main`（`764cf1e`）的 worktree 跑 `pytest tests/`（201 passed）、`test_phase1_e2e.py`，並實際打一次 `/chat`（真的 Azure OpenAI，HTTP 200，session 由 server default 記下快照，兩則 message 正常寫入、`output_replaced` 預設 false），驗證後已刪除測試資料。**仍未驗證的部分**：(1)「命中時可觀察到 ACT 語氣、溫暖接納風格」需要真的 Azure OpenAI 由人判斷，自動化測試 mock 了 LLM，只驗證策略正確進入 prompt；(2) 尚未在 Neon 套用 migration、尚未設定 Vercel `ADMIN_API_KEY`（見上方硬性前置條件）。
+**實作狀態（2026-10-06）**：4.1–4.6 已實作，`tests/test_phase4_rules.py` 在本機 Docker Postgres 全過（無 DB 時 29 項單元測試照跑，DB 整合測試 7 項，含 v1 active → v2 archived → v3 的端到端案例，以及「v2 在 session 開始前開始寫、開始後才 commit」的並行案例——已確認改回時間戳判定時這個測試會失敗）；全套 `pytest tests/` 237 passed（只剩既有的 5 個 `test_phase5.py` 失敗），`test_phase1_e2e.py` 全過。**Migration 相容舊版程式已驗證**（含快照欄位的最終版 migration）：本機套用 `6d55b7146dcc` 後，在 `main`（`764cf1e`）的 worktree 跑 `pytest tests/`（201 passed）、`test_phase1_e2e.py`，並實際打一次 `/chat`（真的 Azure OpenAI，HTTP 200，session 由 server default 記下快照，兩則 message 正常寫入、`output_replaced` 預設 false），驗證後已刪除測試資料。**仍未驗證的部分**：(1)「命中時可觀察到 ACT 語氣、溫暖接納風格」需要真的 Azure OpenAI 由人判斷，自動化測試 mock 了 LLM，只驗證策略正確進入 prompt；(2) ~~尚未在 Neon 套用 migration、尚未設定 Vercel `ADMIN_API_KEY`~~（已完成，見下方上線記錄）。
+
+**上線記錄（2026-10-22）**：
+- 硬性前置條件都在 merge 前完成：Neon 已套用 `6d55b7146dcc`（`alembic current` = head，新表與新欄位齊全）；Vercel 後端（`peace-mind`）Production 已設定 `ADMIN_API_KEY`。Vercel Preview 的 `DATABASE_URL` 跟 Production 是同一個 Neon，preview 上的操作都會寫進正式資料。
+- Merge 前用舊版 `main`（`764cf1e`）在已遷移的 Neon 上打一次正式 `/chat`：HTTP 200、回覆正常（session `smoke-prephase4-20261022`）。
+- PR #4 merge（`bd83645`）後，`peace-mind` 與 `peace-mind-sjiv` 兩個 Vercel 部署皆 success。
+- 正式環境驗證：`GET /api/v1/admin/rules` 200；`POST /admin/rules` 不帶 key、帶錯 key 都回 401，帶正確 key 回 200 並寫入版本 1；`GET /rules/{id}/versions` 回傳完整快照；merge 後 `/chat` HTTP 200、回覆正常（session `smoke-postphase4-20261022`）。
+- 驗證用的規則 `phase4-prod-smoke (draft, safe to ignore)`（`4bd00e9c-2235-4bb9-a06d-a02eed41d9c8`）停在 `draft`、條件是虛構的 `year_of_study`，Rule Engine 不會套用。原本要接著封存，但 Claude Code 的權限設定擋下了對正式資料的修改，留待使用者決定（要封存的話用 `PATCH /rules/{id}` 帶 `{"status": "archived"}`）。
+- 規則實際命中、ACT 語氣的人工判斷尚未在正式環境做（本機已用真的 Azure OpenAI 比較過）。
 
 **實作筆記（與計畫的差異與補充）**：
 - `ensure_session()` 也會順便建立匿名 user，所以首輪起 Example Selector 就查得到 user（profile 是空的，不會命中任何範例，行為不變）。LLM 呼叫失敗（503）時會留下沒有 message 的 session 列，不影響後續對話。
@@ -243,7 +251,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**（2026-10-06 更新）：Phase 0–3 皆已完成並 merge 進 `main`（PR #1–#3），並已在 Neon 正式環境驗證。目前工作分支為 `upgrade/phase4`（Rule Engine），4.1–4.6 程式碼完成、本機 Docker Postgres 測試全過，尚未 push、尚未 merge。**merge 前必須先在 Neon 套用 `6d55b7146dcc`，並在 Vercel 設定 `ADMIN_API_KEY`**（見 Phase 4 硬性前置條件）。
+5. **目前狀態**（2026-10-22 更新）：Phase 0–4 皆已完成並 merge 進 `main`（PR #1–#4），並已在 Neon 正式環境驗證。下一步是從 `main` 開 `upgrade/phase5`（Human-in-the-loop）。
 
 ### ⚠️ 上線後的 Hotfix 記錄（Phase 0 資料庫連線層，2026-08-12）
 
