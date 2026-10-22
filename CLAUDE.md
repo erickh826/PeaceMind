@@ -45,7 +45,8 @@ Phase 0 的 `InMemoryConversationStore` → `PostgresConversationStore` 上線�
 - ✅ **Phase 3**（範例庫）：完成並已 merge 進 `main`（PR #3，2026-10-02），已在 Neon 正式環境驗證
 - ✅ **Phase 4**（Rule Engine）：完成並已 merge 進 `main`（PR #4），2026-10-22 已在 Neon 正式環境驗證
 - ✅ **Phase 5**（Human-in-the-loop）：完成並已 merge 進 `main`（PR #5），2026-10-22 已在 Neon 正式環境驗證；Vercel 未設 `RULE_REVIEW_MODE`（預設 dual）
-- ⬜ Phase 6–8：規劃在 `docs/CLINICAL_FRAMEWORK_TASKS.md`，還沒開始
+- 🔄 **Phase 6**（危機分層）：程式碼完成、本機 Docker Postgres 測試全過（`upgrade/phase6`），**尚未 merge；merge 前必須先在 Neon 跑 migration、在 Vercel 設定 SMTP 與真實的 `COUNSELING_CENTER_CONTACT`**（沒設就只寫 log、回覆不含輔導中心聯絡方式；絕不能用 mock 值）
+- ⬜ Phase 7–8：規劃在 `docs/CLINICAL_FRAMEWORK_TASKS.md`，還沒開始
 
 詳細狀態、每個 checkbox 的完成情況，去看 `docs/CLINICAL_FRAMEWORK_TASKS.md` 最新版本，這份 `CLAUDE.md` 不會逐項同步更新（避免兩份文件互相打架），有衝突以 `CLINICAL_FRAMEWORK_TASKS.md` 為準。
 

@@ -25,6 +25,7 @@ from app.db import models_profile  # noqa: E402,F401
 from app.db import models_example  # noqa: E402,F401
 from app.db import models_rule  # noqa: E402,F401
 from app.db import models_review  # noqa: E402,F401
+from app.db import models_risk  # noqa: E402,F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

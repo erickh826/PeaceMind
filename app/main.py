@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import chat, admin_personas, admin_examples, admin_rules
-from app.routers import admin_rule_review, admin_therapists, admin_oversight
+from app.routers import admin_rule_review, admin_therapists, admin_oversight, admin_risk
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -50,6 +50,7 @@ app.include_router(admin_rules.router, prefix="/api/v1/admin", tags=["Admin — 
 app.include_router(admin_rule_review.router, prefix="/api/v1/admin", tags=["Admin — Rule Review"])
 app.include_router(admin_therapists.router, prefix="/api/v1/admin", tags=["Admin — Therapists"])
 app.include_router(admin_oversight.router, prefix="/api/v1/admin", tags=["Admin — Oversight"])
+app.include_router(admin_risk.router, prefix="/api/v1/admin", tags=["Admin — Risk Events"])
 
 
 @app.get("/", tags=["Health"])
