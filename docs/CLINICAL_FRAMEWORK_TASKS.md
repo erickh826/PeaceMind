@@ -174,7 +174,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - Merge 前用舊版 `main`（`764cf1e`）在已遷移的 Neon 上打一次正式 `/chat`：HTTP 200、回覆正常（session `smoke-prephase4-20261022`）。
 - PR #4 merge（`bd83645`）後，`peace-mind` 與 `peace-mind-sjiv` 兩個 Vercel 部署皆 success。
 - 正式環境驗證：`GET /api/v1/admin/rules` 200；`POST /admin/rules` 不帶 key、帶錯 key 都回 401，帶正確 key 回 200 並寫入版本 1；`GET /rules/{id}/versions` 回傳完整快照；merge 後 `/chat` HTTP 200、回覆正常（session `smoke-postphase4-20261022`）。
-- 驗證用的規則 `phase4-prod-smoke (draft, safe to ignore)`（`4bd00e9c-2235-4bb9-a06d-a02eed41d9c8`）停在 `draft`、條件是虛構的 `year_of_study`，Rule Engine 不會套用。原本要接著封存，但 Claude Code 的權限設定擋下了對正式資料的修改，留待使用者決定（要封存的話用 `PATCH /rules/{id}` 帶 `{"status": "archived"}`）。
+- 驗證用的規則 `phase4-prod-smoke (draft, safe to ignore)`（`4bd00e9c-2235-4bb9-a06d-a02eed41d9c8`）停在 `draft`、條件是虛構的 `year_of_study`，Rule Engine 不會套用。驗證後已由使用者封存（`PATCH` 回傳 `archived`，`GET /admin/rules` 確認）。兩個 smoke session 保留在 Neon，未清除。
 - 規則實際命中、ACT 語氣的人工判斷尚未在正式環境做（本機已用真的 Azure OpenAI 比較過）。
 
 **實作筆記（與計畫的差異與補充）**：
