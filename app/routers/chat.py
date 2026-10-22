@@ -26,7 +26,8 @@ from app.gateways.semantic_gateway import check_semantic, SemanticStatus
 from app.gateways.multiturn_gateway import evaluate_multiturn_risk, RiskAction
 from app.gateways.output_gateway import check_output, OutputStatus
 from app.core.llm_client import chat_with_llm
-from app.core.crisis_handler import get_crisis_response
+from app.core.crisis_handler import get_crisis_response, get_referral_response
+from app.core.risk_escalation import LOCK_TIER, record_crisis_event, session_risk_count
 from app.core.persona_resolver import resolve_persona, record_persona_usage
 from app.core.context_assembler import assemble_context
 from app.core.example_selector import log_example_usage, select_applicable_examples
@@ -98,7 +99,11 @@ async def chat(request: ChatRequest):
     # ── Memory：決定 history 來源 ──────────────────────────────────────────────
     if session_id:
         # Server-side memory 模式：從 store 讀取，忽略前端傳入的 history
-        history = await conversation_store.get_history(session_id)
+        try:
+            history = await conversation_store.get_history(session_id)
+        except Exception as e:  # noqa: BLE001 — DB 故障不能讓危機熱線路徑回 500
+            logger.error("history lookup failed: %s", e)
+            history = []
     else:
         # Stateless 模式：使用前端傳入的 history（兼容舊版前端）
         history = [msg.model_dump() for msg in request.history]
@@ -106,18 +111,41 @@ async def chat(request: ChatRequest):
     # ── Layer 1a: Input Gateway（Regex）───────────────────────────────────────
     input_result = check_input(user_message)
 
-    if input_result.status == InputStatus.BLOCKED:
-        logger.warning("L1a BLOCKED | len=%d | snippet=%.50s", len(user_message), user_message)
-        return ChatResponse(reply=input_result.message, intercepted=True, session_id=session_id)
+    # ── Phase 6：這個 session 的風險紀錄數（tier 3 鎖定 / 跟進提示）──────────
+    risk_count = await session_risk_count(session_id)
 
     if input_result.status == InputStatus.CRISIS:
         logger.warning("L1a CRISIS | snippet=%.50s", user_message)
-        crisis_reply = get_crisis_response(user_message)
-        # 危機訊息也記入 memory
+        # 先記錄學生訊息取得 message_id，再寫 risk_events；任何失敗都不能擋住熱線回覆
+        user_message_id = None
         if session_id:
-            await conversation_store.append(session_id, "user", user_message)
-            await conversation_store.append(session_id, "assistant", crisis_reply)
+            try:
+                await conversation_store.ensure_session(session_id)
+                user_message_id = await conversation_store.append(session_id, "user", user_message)
+            except Exception as e:  # noqa: BLE001
+                logger.error("crisis path: storing user message failed: %s", e)
+        outcome = await record_crisis_event(session_id, user_message, user_message_id)
+        crisis_reply = get_crisis_response(user_message, tier=outcome.tier, notified=outcome.notified)
+        if session_id:
+            try:
+                await conversation_store.append(session_id, "assistant", crisis_reply)
+            except Exception as e:  # noqa: BLE001
+                logger.error("crisis path: storing reply failed: %s", e)
         return ChatResponse(reply=crisis_reply, crisis=True, session_id=session_id)
+
+    # tier 3 鎖定：AI 不再回覆，固定回轉介訊息，學生訊息仍照常記錄
+    if risk_count >= LOCK_TIER:
+        referral = get_referral_response(user_message)
+        try:
+            await conversation_store.append(session_id, "user", user_message)
+            await conversation_store.append(session_id, "assistant", referral)
+        except Exception as e:  # noqa: BLE001
+            logger.error("locked session: storing messages failed: %s", e)
+        return ChatResponse(reply=referral, crisis=True, session_id=session_id)
+
+    if input_result.status == InputStatus.BLOCKED:
+        logger.warning("L1a BLOCKED | len=%d | snippet=%.50s", len(user_message), user_message)
+        return ChatResponse(reply=input_result.message, intercepted=True, session_id=session_id)
 
     # ── Layer 1b: Semantic Gateway（Prompt Shields）──────────────────────────
     # async call — fail-open（見 semantic_gateway.py）
@@ -185,6 +213,7 @@ async def chat(request: ChatRequest):
             past_summaries_text=context.past_summaries_text,
             examples=[ex.to_prompt_dict() for ex in example_selection.examples],
             strategy=applied_rule.strategy,
+            risk_followup=risk_count > 0,
         )
     except Exception as e:
         logger.error("LLM call failed: %s", str(e))

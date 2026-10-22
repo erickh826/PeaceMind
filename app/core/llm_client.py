@@ -26,6 +26,7 @@ def chat_with_llm(
     past_summaries_text: str | None = None,
     examples: list[dict] | None = None,
     strategy: dict | None = None,
+    risk_followup: bool = False,
 ) -> str:
     """
     呼叫 Azure OpenAI，使用三明治結構 Prompt。
@@ -54,6 +55,7 @@ def chat_with_llm(
         "past_summaries_text": past_summaries_text,
         "examples": examples,
         "strategy": strategy,
+        "risk_followup": risk_followup,
     }
     if persona_fragment is not None:
         prompt_kwargs["persona_fragment"] = persona_fragment

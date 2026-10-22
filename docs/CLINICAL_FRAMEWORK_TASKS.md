@@ -224,7 +224,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - 正式環境驗證：會回傳對話內容或會寫入的新端點（`sessions`、`messages`、`overrides`、`feedback-tags`、`therapists`、`test-runs`、`test`、`submit-review`、`rollback`、`override`）不帶 key 皆 401；`GET /rules`、`GET /review-requests` 公開 200；帶 key 直接建立 active 規則回 409（確認 dual 生效，沒有寫入任何資料）；merge 後 `/chat` 200（session `smoke-postphase5-20261022`）。
 - 沒有在正式環境呼叫沙盒（會打真的 LLM 並寫入 `rule_test_runs`）。正式環境要啟用規則前，需要先用 `POST /admin/therapists` 建立第二位 `senior_therapist` / `admin`。
 
-**已知小問題 → 已在 `hotfix/phase5-review-followups` 修正**：
+**已知小問題 → 已在 `hotfix/phase5-review-followups` 修正**（PR #6 已 merge，`95149b7`；2026-10-22 正式環境驗證：兩個 Vercel 部署 success、`rollback` 不帶 key 401、帶 key 直接建立 active 規則 409、`/chat` 200）：
 1. 雙人模式下回滾只允許目前是 `active` 的規則（draft / in_review 回 409）；單人模式不變。
 2. 回滾後送審若沒指定 scope，預設回到回滾前那個版本的 scope（以版本備註 `回滾到 v` 辨識）。沙盒測試套用同一個預設（共用 `_proposed_content()`），否則沙盒的指紋跟送審對不上，回滾後「測過再送審」會一直被 409 擋下。
 3. 「已測過」的指紋現在包含規則引用的 persona 文字與範例內容（`reference_texts`）；測試後這些被改過，送審需重新測試。注意：核准時不會重新比對這個指紋。
@@ -234,14 +234,31 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 ## Phase 6 — 危機分層 + Risk Table（Q10–Q14）
 > 目標：可與 Phase 2 之後任意階段並行做。
 
-- [ ] 6.1 Migration：`risk_events`（應用層強制不可刪除，不寫刪除 API）
-- [ ] 6.2 Escalation Service：查詢同 session 觸發次數 → 決定 tier 1/2/3
-- [ ] 6.3 Tier 2：supervisor 通知（先用 log/webhook stub，之後可接 email/Slack）
-- [ ] 6.4 Tier 3：強制轉真人，前端顯示「等待治療師接手」狀態
-- [ ] 6.5 「跟進對話」偵測：使用者提及先前危機時，查 `risk_events` 歷史，回應更謹慎連貫（Q11）
-- [ ] 6.6 Oversight Dashboard 用的查詢 API：依 user 拉出完整 risk 時間軸（Q14 資料面）
+- [x] 6.1 Migration：`risk_events`（`c4a7e91b5d20`；DB trigger 擋 DELETE 與修改 tier / 片段 / 時間，不寫刪除 API）
+- [x] 6.2 Escalation Service：`app/core/risk_escalation.py`，查詢同 session 觸發次數 → tier 1/2/3
+- [x] 6.3 Tier 2：supervisor 通知——SMTP email（`app/core/crisis_notifier.py`），未設定只寫 log
+- [x] 6.4 Tier 3：AI 停止回覆，每則訊息固定回轉介訊息（不再說「轉接真人」，因為沒有真人接手機制）
+- [x] 6.5 「跟進對話」：session 內已有風險紀錄時，每輪在 SAFETY_CORE 之前加提示區塊（跨 session 版本等 Phase 8）
+- [x] 6.6 Admin API：`GET /admin/risk-events?unresolved=`、`GET /admin/risk-events/users/{id}/timeline`、`POST /admin/risk-events/{id}/resolve`（全部要 X-Admin-Key）
 
-**完成判準**：模擬同一 session 內連續三次觸發危機關鍵字，能觀察到三種不同層級的系統行為。
+**完成判準**：模擬同一 session 內連續三次觸發危機關鍵字，能觀察到三種不同層級的系統行為。→ `tests/test_phase6_risk.py::test_three_triggers_give_three_different_behaviours`（本機 Docker Postgres，假 notifier）。
+
+### Phase 6 實作筆記
+
+設計決策：
+1. **/reset 與紀錄保留**：`risk_events.session_id` / `message_id` 為 ON DELETE SET NULL；學生刪對話的權利保留，最低限度紀錄（觸發片段、tier、時間、user_id）留下，代價是治療師看不到前後文。trigger 允許這兩欄被設成 NULL。保存期限與 PDPO 告知由中心決定（待辦，未定）。
+2. **身份限制**：每次載入頁面都是新匿名 session / user，重新整理會讓 tier 歸零並解除 tier 3 鎖定。接受並等 Phase 8；tier 3 的重點是「通知並留紀錄」，不是困住學生。
+3. **觸發定義**：只有 L1a 關鍵字命中算；LLM 的 risk_level、L3 替換不算。tier 3 之後每筆仍記 tier 3，並再次通知。
+4. **通知**：env `CRISIS_NOTIFY_EMAIL_TO`、`SMTP_HOST`、`SMTP_PORT`（587 STARTTLS / 465 SSL；Vercel 不能用 25）、`SMTP_USER`、`SMTP_PASSWORD`（只放 Vercel / 本機 .env）、`SMTP_FROM`。逾時 5 秒（整體 8 秒）。主旨與內文不含學生原文，只有 tier、時間、事件 id。失敗只記 error log、`supervisor_notified_at` 留空。
+5. **對學生說的話必須屬實**：`COUNSELING_CENTER_CONTACT` 沒設定就**不放輔導中心那一行**（沒有預設值，mock 只在測試）。「已通知輔導中心同事，他們會在辦公時間跟進」只有 email 真的送出才出現，並強調熱線 24 小時有人接聽；email 送出不等於有人讀到，所以不暗示即時處理。`escalated_to_human_at` 目前永遠是空的（沒有真人接手機制）。
+6. **危機路徑不回 500**：get_history、寫訊息、寫 risk_events、通知任一失敗都只記 log，熱線照回（`test_db_failure_still_returns_hotline`）。
+
+已知限制：
+- 沒設 SMTP 時正式環境只有 log，沒有人會即時收到通知。
+- tier 3 鎖定可以靠重新整理繞過（見 2）。
+- 每則訊息多一次 `risk_events` count 查詢。
+
+**merge 前置條件**：(1) 先在 Neon 跑 migration，確認舊版程式在新 schema 上正常；(2) 在 Vercel 設定 SMTP 變數與真實的 `COUNSELING_CENTER_CONTACT`（兩者都沒設 = 只寫 log、回覆不含輔導中心聯絡方式）；(3) 跟中心確認 risk_events 保存期限與 PDPO 告知。
 
 ---
 
@@ -280,7 +297,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**（2026-10-22 更新）：Phase 0–5 皆已完成並 merge 進 `main`（PR #1–#5），並已在 Neon 正式環境驗證。Phase 5 有三個已知小問題待修（見 Phase 5 實作筆記），之後是 Phase 6（危機分層）。
+5. **目前狀態**（2026-10-22 更新）：Phase 0–5 皆已完成並 merge 進 `main`（PR #1–#6，#6 是 Phase 5 的後續修正），並已在 Neon 正式環境驗證。目前工作分支為 `upgrade/phase6`（危機分層 + Risk Table）。
 
 ### ⚠️ 上線後的 Hotfix 記錄（Phase 0 資料庫連線層，2026-08-12）
 

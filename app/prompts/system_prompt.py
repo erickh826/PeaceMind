@@ -134,6 +134,15 @@ def _format_strategy(strategy: dict | None) -> str | None:
     )
 
 
+RISK_FOLLOWUP_BLOCK = (
+    "[RISK FOLLOW-UP]\n"
+    "Earlier in this conversation the student showed signs of serious distress or self-harm risk. "
+    "Stay gentle, careful and consistent with what was said before. Do not ask for details about "
+    "self-harm methods or plans. Where it fits naturally, remind them that the crisis hotlines "
+    "listed below are available 24 hours. This never overrides the safety rules below."
+)
+
+
 def build_prompt(
     user_message: str,
     persona_name: str = "Boon",
@@ -143,6 +152,7 @@ def build_prompt(
     past_summaries_text: str | None = None,
     examples: list[dict] | None = None,
     strategy: dict | None = None,
+    risk_followup: bool = False,
 ) -> str:
     """
     組裝三明治結構 Prompt
@@ -158,10 +168,14 @@ def build_prompt(
         past_summaries_text: Phase 2 Context Assembly Service 組好的跨 session 摘要文字區塊（可為 None）
         examples: Phase 3 命中的範例，每筆為 {"usage_mode": ..., "content": ...}（可為 None / 空）
         strategy: Phase 4 命中規則的 {"therapy": ..., "tone": ...}（可為 None）
+        risk_followup: Phase 6 此 session 已有風險紀錄時為 True，在 SAFETY_CORE 之前加跟進提示區塊
     """
     context_blocks = [
         b
-        for b in (profile_text, past_summaries_text, _format_strategy(strategy), _format_examples(examples))
+        for b in (
+            RISK_FOLLOWUP_BLOCK if risk_followup else None,
+            profile_text, past_summaries_text, _format_strategy(strategy), _format_examples(examples),
+        )
         if b
     ]
     context_str = "\n\n" + "\n\n".join(context_blocks) if context_blocks else ""
