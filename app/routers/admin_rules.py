@@ -3,11 +3,13 @@ Admin API — 規則管理（Phase 4，T-Q1–T-Q5、T-Q8 基礎版）
 
 - 每次變更（建立、修改、啟用、封存）都在同一筆 transaction 更新 rules 並寫一筆
   rule_versions 完整快照；version_number 依規則遞增。
-- Phase 4 允許直接 draft → active（Phase 5 再加審核流程，in_review 保留給 Phase 5，
-  這裡不接受）。啟用前驗證引用對象：persona 必須存在且 active、範例必須存在且 active。
+- 單人模式下允許直接 draft → active；雙人模式（RULE_REVIEW_MODE 預設）下直接 PATCH
+  只能改 draft，active 的修改與啟用走 admin_rule_review.py 的審核流程（見
+  enforce_patch_policy）。in_review 只由審核流程設定，PATCH 不接受。
+  啟用前驗證引用對象：persona 必須存在且 active、範例必須存在且 active。
 - 寫入端點需要 X-Admin-Key（app/core/admin_auth.py）；真正的帳號與角色權限在 Phase 8。
 - 不提供硬刪除，用 status: archived 封存（封存一律立即停用，不論 scope）。
-- 回滾（Phase 5.4）尚未提供；rule_versions 已保存完整快照，之後可直接沿用。
+- 回滾在 admin_rule_review.py（POST /rules/{id}/rollback）。
 
 created_by / changed_by 跟範例 API 一樣，不帶則落到 placeholder therapist。
 """
@@ -24,6 +26,7 @@ from sqlalchemy import func, select
 
 from app.core.admin_auth import require_admin_key
 from app.core.condition_matching import validate_condition_json
+from app.core.rule_review import get_review_mode
 
 router = APIRouter()
 
@@ -212,6 +215,44 @@ async def _write_version(db, rule, changed_by: uuid.UUID, change_note: str | Non
     return version_number
 
 
+def enforce_patch_policy(current_status: str, updates: dict, mode: str) -> None:
+    """
+    直接 PATCH 的限制（Phase 5）：
+    - in_review：只能封存（會取消 pending 申請）；要退回走撤回/拒絕。
+    - dual 模式：只有 draft 能直接改；active 規則只能直接封存，內容修改與 draft → active
+      都要走 submit-review；封存的規則不能再改（要重來請建立新規則）。
+    封存一律不用審：停用規則永遠可以立即做。
+    """
+    only_archive = set(updates) == {"status"} and updates["status"] == "archived"
+    if current_status == "in_review" and not only_archive:
+        raise HTTPException(status_code=409, detail="規則審核中，只能封存；要修改請先撤回或等待審核結果")
+    if mode != "dual":
+        return
+    if current_status == "archived":
+        raise HTTPException(status_code=409, detail="雙人審核模式下，已封存的規則不能再修改")
+    if current_status == "active" and not only_archive:
+        raise HTTPException(
+            status_code=409, detail="雙人審核模式下，active 規則的修改要走 POST /rules/{id}/submit-review"
+        )
+    if current_status == "draft" and updates.get("status") == "active":
+        raise HTTPException(
+            status_code=409, detail="雙人審核模式下，draft → active 要走 POST /rules/{id}/submit-review"
+        )
+
+
+async def supersede_pending_requests(db, rule_id: uuid.UUID, new_status: str, note: str) -> None:
+    """規則被封存（cancelled）、直接修改或回滾（stale）時，pending 的審核申請隨之作廢。"""
+    from sqlalchemy import update
+
+    from app.db.models_review import RuleReviewRequest
+
+    await db.execute(
+        update(RuleReviewRequest)
+        .where(RuleReviewRequest.rule_id == rule_id, RuleReviewRequest.status == "pending")
+        .values(status=new_status, review_note=note, reviewed_at=func.now())
+    )
+
+
 async def _current_version_numbers(db, rule_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
     from app.db.models_rule import RuleVersion
 
@@ -273,6 +314,10 @@ async def create_rule(request: RuleCreateRequest):
     from app.db.models_rule import Rule
 
     async with get_session() as db:
+        if request.status == "active" and get_review_mode() == "dual":
+            raise HTTPException(
+                status_code=409, detail="雙人審核模式下不能直接建立 active 規則；請先建立 draft 再走 submit-review"
+            )
         created_by = await _require_therapist(db, request.created_by, "created_by")
         await _check_references(db, request.action_json, activating=request.status == "active")
 
@@ -311,6 +356,7 @@ async def update_rule(rule_id: str, request: RuleUpdateRequest):
         if rule is None:
             raise HTTPException(status_code=404, detail="規則不存在")
         changed_by = await _require_therapist(db, request.changed_by, "changed_by")
+        enforce_patch_policy(rule.status, updates, get_review_mode())
 
         for field_name, value in updates.items():
             setattr(rule, field_name, value)
@@ -319,6 +365,10 @@ async def update_rule(rule_id: str, request: RuleUpdateRequest):
         rule.updated_at = func.now()
 
         version_number = await _write_version(db, rule, changed_by, request.change_note)
+        if rule.status == "archived":
+            await supersede_pending_requests(db, rule.id, "cancelled", "規則已封存，審核申請自動取消")
+        else:
+            await supersede_pending_requests(db, rule.id, "stale", "規則在審核期間被直接修改，申請失效")
         await db.commit()
         await db.refresh(rule)
         return _to_out(rule, version_number)

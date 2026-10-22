@@ -43,8 +43,9 @@ Phase 0 的 `InMemoryConversationStore` → `PostgresConversationStore` 上線�
 - ✅ **Phase 1**（Persona 系統）：完成並已 merge 進 `main`（PR #1，2026-08-19），2026-10-02 已在 Neon 正式環境驗證
 - ✅ **Phase 2**（Profile / 主題演化 / 跨 Session 摘要）：完成並已 merge 進 `main`（PR #2，2026-08-20），2026-10-02 已在 Neon 正式環境驗證
 - ✅ **Phase 3**（範例庫）：完成並已 merge 進 `main`（PR #3，2026-10-02），已在 Neon 正式環境驗證
-- 🔄 **Phase 4**（Rule Engine）：程式碼完成、本機 Docker Postgres 測試全過（`upgrade/phase4`），**尚未 merge；merge 前必須先在 Neon 跑 migration、在 Vercel 設定 `ADMIN_API_KEY`**
-- ⬜ Phase 5–8：規劃在 `docs/CLINICAL_FRAMEWORK_TASKS.md`，還沒開始
+- ✅ **Phase 4**（Rule Engine）：完成並已 merge 進 `main`（PR #4），2026-10-22 已在 Neon 正式環境驗證
+- 🔄 **Phase 5**（Human-in-the-loop）：程式碼完成、本機 Docker Postgres 測試全過（`upgrade/phase5`），**尚未 merge；merge 前必須先在 Neon 跑 migration，並決定 Vercel 的 `RULE_REVIEW_MODE`（預設 dual）**
+- ⬜ Phase 6–8：規劃在 `docs/CLINICAL_FRAMEWORK_TASKS.md`，還沒開始
 
 詳細狀態、每個 checkbox 的完成情況，去看 `docs/CLINICAL_FRAMEWORK_TASKS.md` 最新版本，這份 `CLAUDE.md` 不會逐項同步更新（避免兩份文件互相打架），有衝突以 `CLINICAL_FRAMEWORK_TASKS.md` 為準。
 

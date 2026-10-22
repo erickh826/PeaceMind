@@ -56,6 +56,7 @@ ACT_RULE_CONDITIONS = {"topics_include": ["Anxiety"], "risk_level": "low", "min_
 @pytest.fixture(autouse=True)
 def _admin_key(monkeypatch):
     monkeypatch.setenv("ADMIN_API_KEY", TEST_ADMIN_KEY)
+    monkeypatch.setenv("RULE_REVIEW_MODE", "single")
 
 
 def _client() -> TestClient:
