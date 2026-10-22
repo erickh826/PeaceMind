@@ -224,7 +224,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 - 正式環境驗證：會回傳對話內容或會寫入的新端點（`sessions`、`messages`、`overrides`、`feedback-tags`、`therapists`、`test-runs`、`test`、`submit-review`、`rollback`、`override`）不帶 key 皆 401；`GET /rules`、`GET /review-requests` 公開 200；帶 key 直接建立 active 規則回 409（確認 dual 生效，沒有寫入任何資料）；merge 後 `/chat` 200（session `smoke-postphase5-20261022`）。
 - 沒有在正式環境呼叫沙盒（會打真的 LLM 並寫入 `rule_test_runs`）。正式環境要啟用規則前，需要先用 `POST /admin/therapists` 建立第二位 `senior_therapist` / `admin`。
 
-**已知小問題 → 已在 `hotfix/phase5-review-followups` 修正**：
+**已知小問題 → 已在 `hotfix/phase5-review-followups` 修正**（PR #6 已 merge，`95149b7`；2026-10-22 正式環境驗證：兩個 Vercel 部署 success、`rollback` 不帶 key 401、帶 key 直接建立 active 規則 409、`/chat` 200）：
 1. 雙人模式下回滾只允許目前是 `active` 的規則（draft / in_review 回 409）；單人模式不變。
 2. 回滾後送審若沒指定 scope，預設回到回滾前那個版本的 scope（以版本備註 `回滾到 v` 辨識）。沙盒測試套用同一個預設（共用 `_proposed_content()`），否則沙盒的指紋跟送審對不上，回滾後「測過再送審」會一直被 409 擋下。
 3. 「已測過」的指紋現在包含規則引用的 persona 文字與範例內容（`reference_texts`）；測試後這些被改過，送審需重新測試。注意：核准時不會重新比對這個指紋。
@@ -280,7 +280,7 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
    - Phase 完成、測試通過後，merge 回 `main`
    - **merge 後先確認 Vercel deployment 沒問題，才從 `main` 開下一個 Phase 的新 branch**
    - 這樣任何時候 `main` 都是「已知可部署」的狀態，不會有半成品疊半成品的風險
-5. **目前狀態**（2026-10-22 更新）：Phase 0–5 皆已完成並 merge 進 `main`（PR #1–#5），並已在 Neon 正式環境驗證。Phase 5 有三個已知小問題待修（見 Phase 5 實作筆記），之後是 Phase 6（危機分層）。
+5. **目前狀態**（2026-10-22 更新）：Phase 0–5 皆已完成並 merge 進 `main`（PR #1–#6，#6 是 Phase 5 的後續修正），並已在 Neon 正式環境驗證。目前工作分支為 `upgrade/phase6`（危機分層 + Risk Table）。
 
 ### ⚠️ 上線後的 Hotfix 記錄（Phase 0 資料庫連線層，2026-08-12）
 
