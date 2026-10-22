@@ -191,14 +191,32 @@ Phase 0 **正式結案**。新增 `docker-compose.yml`（本地 Postgres，port 
 ## Phase 5 — Human-in-the-loop（T-Q6–T-Q10）
 > 目標：沙盒測試、審核工作流、手動覆寫、回饋標籤。
 
-- [ ] 5.1 沙盒測試 API：`POST /api/v1/admin/rules/{id}/test`（不寫入正式 session）
-- [ ] 5.2 Migration：`rule_test_runs`, `rule_review_requests`, `manual_overrides`, `feedback_tags`
-- [ ] 5.3 審核工作流 API：提交審核、核准/退回，機構層級開關（單人直發 vs 雙人審核）
-- [ ] 5.4 一鍵回滾：從 `rule_versions` 還原
-- [ ] 5.5 手動覆寫 API + 標記 `used_for_training`
-- [ ] 5.6 回饋標籤 API
+- [x] 5.1 沙盒測試 API：`POST /api/v1/admin/rules/{id}/test`（不寫入正式 session）
+- [x] 5.2 Migration：`rule_test_runs`, `rule_review_requests`, `manual_overrides`, `feedback_tags`（`8b3f1d9a2c47`）
+- [x] 5.3 審核工作流 API：提交審核、核准/退回，機構層級開關（單人直發 vs 雙人審核）
+- [x] 5.4 一鍵回滾：從 `rule_versions` 還原
+- [x] 5.5 手動覆寫 API + 標記 `used_for_training`
+- [x] 5.6 回饋標籤 API
 
 **完成判準**：治療師能在沙盒驗證規則效果，走完「提交審核→核准→上線」流程，並能回滾到前一版本。
+
+### Phase 5 實作筆記（`upgrade/phase5`，尚未 merge）
+
+**設計決定**
+- **身份**：沒有治療師登入，`submitted_by` / `reviewer_id` / `changed_by` 由 body 自報；系統驗證該治療師存在、雙人模式下 reviewer 角色須為 `senior_therapist` 或 `admin` 且 ≠ 提交者。**這只擋得了誤操作，擋不了冒名**，真正保證要等 Phase 8。為此新增 `POST/GET /admin/therapists`（需 key）。
+- **模式開關**：env `RULE_REVIEW_MODE=single|dual`，預設 `dual`；只有剛好是 `single` 才是單人，打錯字一律當 dual。單人模式維持 Phase 4 行為（可直接 draft→active、不強制測試）。
+- **審核**：申請帶完整提議快照 + `base_version_id`；核准時同一個 transaction 套用並寫新版本，審核期間舊版本照常運作；核准時若最新版本已不是 base，申請變 `stale`（409）。每條規則同時只能有一個 pending 申請。雙人模式下 PATCH 只能改 draft；active 的內容修改與 draft→active 都走審核；封存永遠立即生效並取消 pending 申請。`in_review` 只用在「draft 送審中」。駁回後回到 draft，可重送，駁回理由保留。
+- **測試門檻**：只在雙人模式強制「送審前必須測過『同一份內容』」（比對 `snapshot_hash`）。
+- **沙盒**：走真的 `chat_with_llm()` 並強制套用規則 action；L1/L3 照跑；不寫 messages/session/profile；可帶模擬 profile 回報是否命中條件；結果寫 `rule_test_runs`（含版本與 hash）。全域限流 `SANDBOX_MAX_RUNS_PER_HOUR`（預設 30，超過 429）。
+- **回滾**：把舊快照複製成新版本（不覆寫歷史），不經審核、立即生效；只能回到當時是 active 的版本；引用的 persona/範例已非 active 時擋下（409）；已封存規則不能回滾。新版本 scope 強制 `immediate`（否則已在舊版本的 session 不會切換），因此回滾後 `rule.scope` 會是 `immediate`。
+- **覆寫 / 標籤**：只做事後標註，不改 `messages.content`，也不影響之後 LLM 看到的歷史；僅限 assistant 訊息；標籤用固定詞彙表（太正式、缺乏同理心、療法選擇不當、資訊錯誤、其他）+ 選填 note。FK 為 ON DELETE CASCADE，學生 reset／「忘記我」時一併刪除。
+- **隱私**：凡回傳對話內容的端點（沙盒結果、對話檢視、覆寫、標籤）一律要 `X-Admin-Key`；規則、範例、審核申請清單維持公開讀取。
+
+**部署注意**
+- 先在 Neon 跑 `alembic upgrade head`（只新增表，舊程式不受影響）再部署。
+- 預設 dual：上線後 draft→active 需要第二位 senior/admin 治療師（用 `POST /admin/therapists` 建立），或在 Vercel 設 `RULE_REVIEW_MODE=single`。
+
+**測試**：`tests/test_phase5_hitl.py`（舊的 `tests/test_phase5.py` 是安全層測試，不動）；在本機 Docker Postgres 跑過 dual 端到端與 single 模式。
 
 ---
 
